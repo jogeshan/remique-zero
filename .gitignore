@@ -1,0 +1,21 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+.envu
+
+# Local and generated files
+.DS_Store
+.neon
+node_modules/
+dist/
+build/
