@@ -529,6 +529,15 @@ class Conversation(TimestampMixin, Base):
         default=True,
         nullable=False,
     )
+    # Rolling summary of the oldest messages, produced by context
+    # compression. summary_message_count is how many of the oldest
+    # messages have been folded into the summary so far.
+    summary: Mapped[str | None] = mapped_column(Text)
+    summary_message_count: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        nullable=False,
+    )
 
     __table_args__ = (
         Index(
@@ -778,5 +787,48 @@ class DebtPayment(Base):
             "ix_debt_payments_user_paid",
             "user_id",
             "paid_at",
+        ),
+    )
+
+
+class Task(TimestampMixin, Base):
+    __tablename__ = "tasks"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=new_uuid,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    title: Mapped[str] = mapped_column(
+        String(300),
+        nullable=False,
+    )
+    notes: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(
+        String(10),
+        default="open",
+        nullable=False,
+    )
+    due_at: Mapped[DateTime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    completed_at: Mapped[DateTime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_tasks_user_status",
+            "user_id",
+            "status",
+        ),
+        CheckConstraint(
+            "status IN ('open', 'done')",
+            name="valid_task_status",
         ),
     )

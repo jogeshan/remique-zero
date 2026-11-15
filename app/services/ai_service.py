@@ -3,6 +3,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from time import perf_counter
+from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from google import genai
@@ -12,11 +13,12 @@ from sqlalchemy import func, select
 from app.config import settings
 from app.models import (
     AIUsageRecord,
+    Conversation,
     TelegramAccount,
     User,
     UserSetting,
 )
-from app.services import memory_service
+from app.services import conversation_service, memory_service
 from app.services.ai_tools import (
     TOOL_DECLARATIONS,
     execute_ai_tool,
@@ -43,6 +45,9 @@ MUTATING_TOOLS = {
     "record_debt_payment",
     "set_expense_reminders",
     "set_daily_overview",
+    "create_task",
+    "complete_task",
+    "delete_task",
 }
 
 # Human-readable names for the language codes offered in
@@ -59,6 +64,7 @@ def build_system_instruction(
     memories_text: str | None = None,
     now_local: datetime | None = None,
     language: str | None = None,
+    conversation_summary: str | None = None,
 ) -> str:
 
     role_descriptions = {
@@ -122,6 +128,7 @@ IMPLEMENTED:
 - Reminders: every user can create one-time and recurring (daily, weekly, weekdays) reminders in their own timezone, delivered as Telegram messages. Reminders that come due while the service is asleep are delivered when it wakes.
 - Multimodal input: users can send photos and images for you to interpret, voice messages and audio (Bangla, English, or Banglish — the message is transcribed for you and you respond in the same language the user used), and PDF or plain-text documents for you to read, summarize, and answer questions about.
 - Expense tracking: every user can log income and expenses by category, track money they borrowed or lent (debts and loans) with partial repayments, and get totals and breakdowns per period. Users can enable expense check-in reminders several times a day and a morning overview of yesterday's money.
+- Personal task lists: every user has a to-do list they can add to, review, complete, and delete from in conversation.
 
 ADMINISTRATIVE TOOL RULES:
 
@@ -216,6 +223,24 @@ FINANCE RULES:
   for yesterday (or today); set_daily_overview manages the
   automatic morning delivery of yesterday's overview.
 
+TASK RULES:
+
+- Task lists are implemented. Every user has a personal to-do
+  list, managed with create_task, list_tasks, complete_task,
+  and delete_task. These tools only ever operate on the
+  speaking user's own list.
+- When the user asks to add something to their list ("add to
+  my list", "put X on my to-do list"), call create_task
+  instead of only acknowledging it in text.
+- When the user asks what is on their list, call list_tasks.
+- When the user says something on the list is done ("mark X
+  done", "I finished X"), call complete_task with the task ID
+  from list_tasks; call list_tasks first if you need the ID.
+- Tasks are NOT reminders: a task's due date is informational
+  only and nothing is delivered at that time. If the user
+  wants to be notified at a time, create a reminder as well
+  (or instead), following the REMINDER RULES.
+
 CONVERSATION RULES:
 
 - Use previous conversation context when available.
@@ -239,7 +264,7 @@ Python services enforce permissions and perform actual operations.
     if now_local is not None:
         instruction += (
             "Current date and time for the user: "
-            f"{now_local.strftime('%A %d %B %Y, %H:%M')} "
+            f"{now_local.strftime('%A %d %B %Y, %H:%M:%S')} "
             f"({timezone_name or 'Unknown'})\n"
         )
 
@@ -263,6 +288,16 @@ Python services enforce permissions and perform actual operations.
             f"\n\nThe user's preferred language is {language_name}. "
             "Prefer replying in that language unless the user "
             "writes in a different language."
+        )
+
+    if conversation_summary:
+        instruction += (
+            "\n\nSummary of earlier in this conversation:\n"
+            f"{conversation_summary}\n\n"
+            "This summary covers the part of the conversation "
+            "that scrolled out of the recent history below. "
+            "Treat it as established context from this same "
+            "conversation."
         )
 
     return instruction
@@ -827,6 +862,174 @@ async def _load_user_language(
         return None
 
 
+def _get_summary_model() -> str | None:
+    """
+    The cheapest model candidate, used for background
+    summarization: the "lite" tier when one is configured,
+    otherwise the primary candidate.
+    """
+    models = _get_model_candidates()
+
+    for model in models:
+        if "lite" in model.lower():
+            return model
+
+    return models[0] if models else None
+
+
+async def _load_conversation_summary(
+    session_factory,
+    conversation_id: UUID,
+) -> tuple[str | None, list[dict] | None]:
+    """
+    Load a conversation's rolling summary and its recent
+    unsummarized history.
+
+    Like memories, this is an enhancement, never a dependency:
+    any failure is logged and treated as "no summary" so chat
+    keeps working with the caller-provided history.
+    """
+    try:
+        async with session_factory() as session:
+            conversation = await session.get(
+                Conversation,
+                conversation_id,
+            )
+
+            if conversation is None:
+                return None, None
+
+            summary, recent_history = (
+                await conversation_service.get_history_with_summary(
+                    session,
+                    conversation,
+                )
+            )
+
+            return summary, recent_history
+
+    except Exception:
+        logger.exception(
+            "Unable to load conversation summary for %s; "
+            "continuing without it.",
+            conversation_id,
+        )
+        return None, None
+
+
+async def _maybe_compress_conversation(
+    client,
+    session_factory,
+    conversation_id: UUID,
+) -> str | None:
+    """
+    Fold the oldest unsummarized messages into the rolling
+    summary when the conversation has grown past the threshold.
+
+    Returns the updated summary, or None when no compression
+    was due. FULLY failure-safe: any error is logged and the
+    caller continues with the plain recent history — compression
+    must never break a reply.
+    """
+    try:
+        async with session_factory() as session:
+            conversation = await session.get(
+                Conversation,
+                conversation_id,
+            )
+
+            if conversation is None:
+                return None
+
+            total = (
+                await conversation_service
+                .count_conversation_messages(
+                    session,
+                    conversation_id,
+                )
+            )
+            summarized = conversation.summary_message_count or 0
+
+            if not conversation_service.should_compress(
+                total,
+                summarized,
+            ):
+                return None
+
+            previous_summary = conversation.summary
+            chunk = (
+                await conversation_service
+                .get_oldest_unsummarized_messages(
+                    session,
+                    conversation,
+                )
+            )
+
+        if not chunk:
+            return None
+
+        model = _get_summary_model()
+
+        if model is None:
+            return None
+
+        prompt = conversation_service.build_summary_prompt(
+            previous_summary,
+            chunk,
+        )
+
+        # Plain text call on the cheapest model — no tools, so a
+        # summary can never trigger a backend operation.
+        response = await client.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.2,
+                max_output_tokens=1200,
+            ),
+        )
+
+        new_summary = conversation_service.cap_summary(
+            _get_response_text(response)
+        )
+
+        if not new_summary:
+            return None
+
+        async with session_factory() as session:
+            conversation = await session.get(
+                Conversation,
+                conversation_id,
+            )
+
+            if conversation is None:
+                return None
+
+            await conversation_service.save_conversation_summary(
+                session,
+                conversation,
+                new_summary,
+                len(chunk),
+            )
+
+        logger.info(
+            "Conversation context compressed: conversation=%s "
+            "folded=%s",
+            conversation_id,
+            len(chunk),
+        )
+
+        return new_summary
+
+    except Exception:
+        logger.exception(
+            "Conversation compression failed for %s; "
+            "continuing without it.",
+            conversation_id,
+        )
+        return None
+
+
 async def generate_ai_reply(
     session_factory,
     *,
@@ -834,6 +1037,7 @@ async def generate_ai_reply(
     prompt: str,
     history: list[dict] | None = None,
     attachments: list[tuple[str, bytes]] | None = None,
+    conversation_id: UUID | None = None,
 ) -> AIReply:
 
     if not settings.gemini_api_key:
@@ -877,6 +1081,26 @@ async def generate_ai_reply(
         telegram_user_id,
     )
 
+    # When the caller identifies the conversation, prefer its
+    # summary-aware history: the rolling summary goes into the
+    # system instruction and the summarized messages stay out of
+    # the contents. Loading is failure-safe — on any problem the
+    # caller-provided history is used as before.
+    conversation_summary = None
+
+    if conversation_id is not None:
+        loaded_summary, recent_history = (
+            await _load_conversation_summary(
+                session_factory,
+                conversation_id,
+            )
+        )
+
+        conversation_summary = loaded_summary
+
+        if recent_history is not None:
+            history = recent_history
+
     started_at = perf_counter()
     selected_model = models[0]
     response = None
@@ -892,18 +1116,36 @@ async def generate_ai_reply(
             _get_user_timezone(timezone_name)
         )
 
-        system_instruction = build_system_instruction(
-            role=user_role,
-            display_name=display_name,
-            timezone_name=timezone_name,
-            memories_text=memories_text,
-            now_local=now_local,
-            language=language,
-        )
-
         async with genai.Client(
             api_key=settings.gemini_api_key
         ).aio as client:
+
+            # Fold old messages into the rolling summary when
+            # the conversation outgrows the threshold. This is
+            # best-effort: it never fails the reply, it only
+            # costs one extra cheap-model call on the requests
+            # where it triggers.
+            if conversation_id is not None:
+                updated_summary = (
+                    await _maybe_compress_conversation(
+                        client,
+                        session_factory,
+                        conversation_id,
+                    )
+                )
+
+                if updated_summary:
+                    conversation_summary = updated_summary
+
+            system_instruction = build_system_instruction(
+                role=user_role,
+                display_name=display_name,
+                timezone_name=timezone_name,
+                memories_text=memories_text,
+                now_local=now_local,
+                language=language,
+                conversation_summary=conversation_summary,
+            )
 
             for index, model in enumerate(models):
                 selected_model = model

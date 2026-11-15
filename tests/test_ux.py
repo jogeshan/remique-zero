@@ -97,6 +97,7 @@ async def test_setup_bot_commands_registers_user_menu():
         "income",
         "summary",
         "debts",
+        "tasks",
         "settings",
     ]
 

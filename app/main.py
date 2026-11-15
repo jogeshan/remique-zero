@@ -16,7 +16,7 @@ from app.services.delivery_service import process_due_deliveries
 
 logger = logging.getLogger(__name__)
 
-DELIVERY_INTERVAL_SECONDS = 60
+DELIVERY_INTERVAL_SECONDS = 10
 
 
 async def _delivery_loop(bot) -> None:

@@ -7,7 +7,12 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.models import AdminAuditLog, TelegramAccount, User, UserSetting
-from app.services import finance_service, memory_service, reminder_service
+from app.services import (
+    finance_service,
+    memory_service,
+    reminder_service,
+    task_service,
+)
 from app.services.admin_service import (
     create_admin_invite,
     get_user_statistics,
@@ -552,6 +557,92 @@ TOOL_DECLARATIONS = [
             "required": ["enabled"],
         },
     },
+    {
+        "name": "create_task",
+        "description": (
+            "Add an item to the calling user's personal task "
+            "list (to-do list). Tasks are NOT reminders: nothing "
+            "is delivered at a time unless the user also asks "
+            "for a reminder. Available to every user, for their "
+            "own list only."
+        ),
+        "parameters_json_schema": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "What needs to be done.",
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "Optional extra detail about the task.",
+                },
+                "due_at": {
+                    "type": "string",
+                    "description": (
+                        "Optional due date/time as ISO 8601 with "
+                        "a timezone offset (e.g. "
+                        "2026-11-16T09:00:00+06:00). Informational "
+                        "only — it does not schedule a reminder."
+                    ),
+                },
+            },
+            "required": ["title"],
+        },
+    },
+    {
+        "name": "list_tasks",
+        "description": (
+            "List the calling user's personal tasks. Defaults "
+            "to open tasks; use status to see done tasks or all."
+        ),
+        "parameters_json_schema": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": ["open", "done", "all"],
+                    "description": "Defaults to open.",
+                },
+            },
+        },
+    },
+    {
+        "name": "complete_task",
+        "description": (
+            "Mark one of the calling user's open tasks as done, "
+            "by task ID from list_tasks (full ID or the short "
+            "ID shown in the list)."
+        ),
+        "parameters_json_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "The task ID returned by list_tasks.",
+                },
+            },
+            "required": ["task_id"],
+        },
+    },
+    {
+        "name": "delete_task",
+        "description": (
+            "Delete one of the calling user's open tasks "
+            "entirely, by task ID from list_tasks (full ID or "
+            "the short ID shown in the list)."
+        ),
+        "parameters_json_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "The task ID returned by list_tasks.",
+                },
+            },
+            "required": ["task_id"],
+        },
+    },
 ]
 
 
@@ -783,6 +874,40 @@ def _parse_tool_datetime(raw, tz_name: str) -> datetime:
         parsed = parsed.replace(tzinfo=ZoneInfo(tz_name))
 
     return parsed.astimezone(timezone.utc)
+
+
+async def _task_actor(session, telegram_user_id: int):
+    """
+    Resolve the acting user for the task-list tools.
+
+    Tasks are personal data: the tools only ever operate on the
+    caller's own list, resolved from the authenticated Telegram
+    ID — arguments can never name another user.
+    """
+    return await _memory_actor(session, telegram_user_id)
+
+
+def _task_to_dict(task, tz_name: str) -> dict:
+    due_at = task.due_at
+    completed_at = task.completed_at
+    created_at = task.created_at
+    return {
+        "id": str(task.id),
+        "short_id": str(task.id)[:8],
+        "title": task.title,
+        "notes": task.notes,
+        "status": task.status,
+        "due_at": due_at.isoformat() if due_at else None,
+        "due_at_local": (
+            _format_local_time(due_at, tz_name) if due_at else None
+        ),
+        "created_at": (
+            created_at.isoformat() if created_at else None
+        ),
+        "completed_at": (
+            completed_at.isoformat() if completed_at else None
+        ),
+    }
 
 
 async def _log_tool_execution(
@@ -1822,6 +1947,126 @@ async def _execute_ai_tool(
                         else "Morning overview is off."
                     ),
                     **result,
+                }
+
+            if tool_name == "create_task":
+                title = arguments.get("title")
+
+                if not isinstance(title, str) or not title.strip():
+                    raise ValueError(
+                        "A non-empty task title is required."
+                    )
+
+                notes = arguments.get("notes")
+                if notes is not None and not isinstance(notes, str):
+                    raise ValueError("notes must be a string.")
+
+                user, error = await _task_actor(
+                    session,
+                    telegram_user_id,
+                )
+                if error is not None:
+                    return error
+
+                tz_name = await _user_timezone_name(session, user.id)
+
+                due_at = None
+                if arguments.get("due_at"):
+                    due_at = _parse_tool_datetime(
+                        arguments["due_at"],
+                        tz_name,
+                    )
+
+                task = await task_service.create_task(
+                    session,
+                    user.id,
+                    title=title,
+                    notes=notes,
+                    due_at=due_at,
+                )
+
+                return {
+                    "success": True,
+                    "message": "Task added to your list.",
+                    "task": _task_to_dict(task, tz_name),
+                }
+
+            if tool_name == "list_tasks":
+                status = arguments.get("status") or "open"
+                if status not in (*task_service.TASK_STATUSES, "all"):
+                    raise ValueError(
+                        "status must be 'open', 'done', or 'all'."
+                    )
+
+                user, error = await _task_actor(
+                    session,
+                    telegram_user_id,
+                )
+                if error is not None:
+                    return error
+
+                tz_name = await _user_timezone_name(session, user.id)
+
+                tasks = await task_service.list_tasks(
+                    session,
+                    user.id,
+                    status=status,
+                )
+
+                return {
+                    "success": True,
+                    "count": len(tasks),
+                    "tasks": [
+                        _task_to_dict(task, tz_name) for task in tasks
+                    ],
+                }
+
+            if tool_name == "complete_task":
+                user, error = await _task_actor(
+                    session,
+                    telegram_user_id,
+                )
+                if error is not None:
+                    return error
+
+                tz_name = await _user_timezone_name(session, user.id)
+
+                # Raises ValueError when the reference is
+                # unknown, ambiguous, or already done.
+                task = await task_service.complete_task(
+                    session,
+                    user.id,
+                    arguments.get("task_id"),
+                )
+
+                return {
+                    "success": True,
+                    "message": "Task marked as done.",
+                    "task": _task_to_dict(task, tz_name),
+                }
+
+            if tool_name == "delete_task":
+                user, error = await _task_actor(
+                    session,
+                    telegram_user_id,
+                )
+                if error is not None:
+                    return error
+
+                tz_name = await _user_timezone_name(session, user.id)
+
+                # Raises ValueError when the reference is
+                # unknown, ambiguous, or already done.
+                task = await task_service.delete_task(
+                    session,
+                    user.id,
+                    arguments.get("task_id"),
+                )
+
+                return {
+                    "success": True,
+                    "message": "Task deleted.",
+                    "task": _task_to_dict(task, tz_name),
                 }
 
             return {

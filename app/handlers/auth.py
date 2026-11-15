@@ -147,6 +147,7 @@ GENERAL
 /income AMOUNT NOTE — Quick-add income
 /summary — Yesterday's money overview (or /summary today|week|month)
 /debts — Your open debts and loans
+/tasks — Your personal task list
 /settings — Timezone and language
 
 You can also send me photos, voice messages and documents (PDF/text) and I will read them.
@@ -167,6 +168,7 @@ GENERAL
 /income AMOUNT NOTE — Quick-add income
 /summary — Yesterday's money overview (or /summary today|week|month)
 /debts — Your open debts and loans
+/tasks — Your personal task list
 /settings — Timezone and language
 
 You can also send me photos, voice messages and documents (PDF/text) and I will read them.
@@ -196,6 +198,7 @@ GENERAL
 /income AMOUNT NOTE — Quick-add income
 /summary — Yesterday's money overview (or /summary today|week|month)
 /debts — Your open debts and loans
+/tasks — Your personal task list
 /settings — Timezone and language
 
 You can also send me photos, voice messages and documents (PDF/text) and I will read them.
