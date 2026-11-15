@@ -1,5 +1,6 @@
 import logging
 
+from telegram import BotCommand
 from telegram.ext import Application
 
 from app.config import settings
@@ -14,6 +15,41 @@ logging.basicConfig(
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
+
+
+# The user-facing command menu shown by Telegram clients. Admin
+# commands are deliberately not listed here; they stay available
+# by typing them (see /help for administrators).
+USER_BOT_COMMANDS = [
+    BotCommand("start", "Register or open your account"),
+    BotCommand("help", "Show all commands"),
+    BotCommand("newchat", "Start a new conversation"),
+    BotCommand("memories", "What I remember about you"),
+    BotCommand("remind", "Set a reminder"),
+    BotCommand("reminders", "List your reminders"),
+    BotCommand("expense", "Quick-add an expense"),
+    BotCommand("income", "Quick-add income"),
+    BotCommand("summary", "Money overview"),
+    BotCommand("debts", "Your open debts and loans"),
+    BotCommand("settings", "Timezone and language"),
+]
+
+
+async def setup_bot_commands(application: Application) -> None:
+    """
+    Register the bot command menu with Telegram (post_init hook).
+
+    A failure here must never block startup, so it is logged and
+    swallowed.
+    """
+    try:
+        await application.bot.set_my_commands(USER_BOT_COMMANDS)
+        logger.info("Bot command menu registered.")
+    except Exception:
+        logger.warning(
+            "Failed to register the bot command menu.",
+            exc_info=True,
+        )
 
 
 async def telegram_error_handler(update, context):
@@ -41,6 +77,7 @@ def create_telegram_application() -> Application:
     )
 
     register_handlers(application)
+    application.post_init = setup_bot_commands
     application.add_error_handler(telegram_error_handler)
 
     return application
