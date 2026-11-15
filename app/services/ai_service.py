@@ -89,7 +89,7 @@ IMPLEMENTED:
 - Gemini text conversations.
 - AI request limits and usage tracking.
 - Database-backed user accounts.
-- Persistent conversation history.
+- Persistent conversation history (use /newchat to start fresh; the previous conversation is preserved).
 - Administrative backend function calling.
 
 NOT YET IMPLEMENTED:
@@ -563,11 +563,17 @@ async def _generate_with_tools(
                     arguments=function_arguments,
                 )
 
+                # NOTE: Part.from_function_response() does not accept an
+                # `id` argument in google-genai 1.x — passing one raises
+                # TypeError after the tool has already executed. Build the
+                # FunctionResponse directly, which does support `id`.
                 function_response_parts.append(
-                    types.Part.from_function_response(
-                        name=function_name,
-                        response=result,
-                        id=function_id,
+                    types.Part(
+                        function_response=types.FunctionResponse(
+                            name=function_name,
+                            response=result,
+                            id=function_id,
+                        )
                     )
                 )
 
