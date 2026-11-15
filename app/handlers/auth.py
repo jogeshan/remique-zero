@@ -131,6 +131,7 @@ GENERAL
 /start — Register or open your account
 /help — Show commands
 /newchat — Start a new conversation
+/memories — List what I remember about you
 
 Your personal assistant is ready to help you."""
 
@@ -141,6 +142,7 @@ GENERAL
 /start — Open your account
 /help — Show commands
 /newchat — Start a new conversation
+/memories — List what I remember about you
 
 ADMINISTRATION
 /invite [uses] [expiry_days] — Generate invitation
@@ -160,6 +162,7 @@ GENERAL
 /start — Open your account
 /help — Show commands
 /newchat — Start a new conversation
+/memories — List what I remember about you
 
 ADMINISTRATION
 /invite [uses] [expiry_days] — Generate invitation

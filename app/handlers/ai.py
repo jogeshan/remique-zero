@@ -24,6 +24,8 @@ from app.services.conversation_service import (
     start_new_conversation,
 )
 
+from app.services import memory_service
+
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +84,82 @@ async def newchat_command(
 
         await message.reply_text(
             "I couldn't start a new conversation. Please try again."
+        )
+
+
+async def memories_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    message = update.effective_message
+    user = update.effective_user
+    chat = update.effective_chat
+
+    if not message or not user or not chat:
+        return
+
+    if chat.type != "private":
+        await message.reply_text(
+            "Please use /memories in a private conversation."
+        )
+        return
+
+    try:
+        session_factory = get_session_factory()
+
+        async with session_factory() as session:
+            account = await memory_service.get_active_user_by_telegram_id(
+                session,
+                user.id,
+            )
+
+            if account is None:
+                await message.reply_text(
+                    "Your Remique Zero account is not active. "
+                    "Please contact the administrator."
+                )
+                return
+
+            memories = await memory_service.list_memories(
+                session,
+                account.id,
+            )
+
+        if not memories:
+            await message.reply_text(
+                "I don't have any memories saved for you yet.\n\n"
+                "Tell me something like \"remember that my favorite "
+                "color is blue\" and I'll store it here."
+            )
+            return
+
+        lines = ["🧠 What I remember about you:\n"]
+
+        for number, memory in enumerate(memories, start=1):
+            short_id = str(memory.id)[:8]
+            content = " ".join(memory.content.split())
+            if len(content) > 200:
+                content = content[:197].rstrip() + "…"
+            lines.append(
+                f"{number}. [{memory.category}] {content} "
+                f"(id: {short_id})"
+            )
+
+        lines.append(
+            "\nTo remove one, just tell me \"forget that …\" or "
+            "give me its number or id, and I'll delete it."
+        )
+
+        await _send_long_message(message, "\n".join(lines))
+
+    except Exception:
+        logger.exception(
+            "Unable to list memories for user %s",
+            user.id,
+        )
+
+        await message.reply_text(
+            "I couldn't load your memories. Please try again."
         )
 
 
