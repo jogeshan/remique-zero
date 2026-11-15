@@ -22,6 +22,8 @@ from app.handlers.ai import (
     ai_message_handler,
     memories_command,
     newchat_command,
+    remind_command,
+    reminders_command,
 )
 
 
@@ -31,6 +33,8 @@ def register_handlers(application: Application) -> None:
         ("help", help_command),
         ("newchat", newchat_command),
         ("memories", memories_command),
+        ("remind", remind_command),
+        ("reminders", reminders_command),
         ("invite", invite_command),
         ("revoke", revoke_command),
         ("users", users_command),

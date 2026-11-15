@@ -1,11 +1,15 @@
 import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from sqlalchemy import select
 from telegram import Update
 from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 from app.config import settings
 from app.database import get_session_factory
+from app.models import UserSetting
 
 from app.services.ai_service import (
     AIAccountInactive,
@@ -24,7 +28,7 @@ from app.services.conversation_service import (
     start_new_conversation,
 )
 
-from app.services import memory_service
+from app.services import memory_service, reminder_service
 
 
 logger = logging.getLogger(__name__)
@@ -160,6 +164,208 @@ async def memories_command(
 
         await message.reply_text(
             "I couldn't load your memories. Please try again."
+        )
+
+
+async def _get_user_timezone_name(session, user_id) -> str:
+    """Return the user's configured timezone name (or the default)."""
+    tz_name = await session.scalar(
+        select(UserSetting.timezone).where(
+            UserSetting.user_id == user_id
+        )
+    )
+    return tz_name or settings.default_timezone
+
+
+def _user_zone(tz_name: str) -> ZoneInfo:
+    try:
+        return ZoneInfo(tz_name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo("UTC")
+
+
+async def remind_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    message = update.effective_message
+    user = update.effective_user
+    chat = update.effective_chat
+
+    if not message or not user or not chat:
+        return
+
+    if chat.type != "private":
+        await message.reply_text(
+            "Please use /remind in a private conversation."
+        )
+        return
+
+    text = " ".join(context.args or []).strip()
+
+    if not text:
+        await message.reply_text(
+            "Tell me what to remind you about and when.\n\n"
+            "Examples:\n"
+            "/remind tomorrow at 9am submit the report\n"
+            "/remind in 2 hours call mom\n"
+            "/remind every Sunday at 18:30 prepare the weekly report"
+        )
+        return
+
+    try:
+        session_factory = get_session_factory()
+
+        async with session_factory() as session:
+            account = await memory_service.get_active_user_by_telegram_id(
+                session,
+                user.id,
+            )
+
+            if account is None:
+                await message.reply_text(
+                    "Your Remique Zero account is not active. "
+                    "Please contact the administrator."
+                )
+                return
+
+            tz_name = await _get_user_timezone_name(session, account.id)
+            tz = _user_zone(tz_name)
+            now_local = datetime.now(tz)
+
+            parsed = reminder_service.parse_reminder_text(
+                text,
+                tz,
+                now_local,
+            )
+
+            if parsed is None:
+                await message.reply_text(
+                    "I couldn't find a date or time in that. "
+                    "Try something like \"tomorrow at 9am\", "
+                    "\"in 2 hours\" or \"every Sunday at 18:30\"."
+                )
+                return
+
+            title, first_run_local, recurrence = parsed
+
+            reminder = await reminder_service.create_reminder(
+                session,
+                account,
+                title=title,
+                first_run_at=first_run_local,
+                recurrence=recurrence,
+                timezone_name=tz_name,
+            )
+
+        when = first_run_local.strftime("%a %d %b %Y, %H:%M")
+        label = reminder_service.recurrence_label(
+            reminder.recurrence_rule
+        )
+
+        confirmation = f"⏰ Reminder set: {title}\nWhen: {when} ({tz_name})"
+        if label:
+            confirmation += f"\nRepeats: {label}"
+        confirmation += f"\n(id: {str(reminder.id)[:8]})"
+
+        await message.reply_text(confirmation)
+
+    except Exception:
+        logger.exception(
+            "Unable to create reminder for user %s",
+            user.id,
+        )
+
+        await message.reply_text(
+            "I couldn't set that reminder. Please try again."
+        )
+
+
+async def reminders_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    message = update.effective_message
+    user = update.effective_user
+    chat = update.effective_chat
+
+    if not message or not user or not chat:
+        return
+
+    if chat.type != "private":
+        await message.reply_text(
+            "Please use /reminders in a private conversation."
+        )
+        return
+
+    try:
+        session_factory = get_session_factory()
+
+        async with session_factory() as session:
+            account = await memory_service.get_active_user_by_telegram_id(
+                session,
+                user.id,
+            )
+
+            if account is None:
+                await message.reply_text(
+                    "Your Remique Zero account is not active. "
+                    "Please contact the administrator."
+                )
+                return
+
+            tz_name = await _get_user_timezone_name(session, account.id)
+            tz = _user_zone(tz_name)
+
+            pairs = await reminder_service.list_active_reminders(
+                session,
+                account.id,
+            )
+
+        if not pairs:
+            await message.reply_text(
+                "You don't have any active reminders.\n\n"
+                "Set one with /remind, for example:\n"
+                "/remind tomorrow at 9am submit the report"
+            )
+            return
+
+        lines = ["⏰ Your reminders:\n"]
+
+        for number, (reminder, next_at) in enumerate(pairs, start=1):
+            short_id = str(reminder.id)[:8]
+            if next_at is not None:
+                when = next_at.astimezone(tz).strftime(
+                    "%a %d %b %Y, %H:%M"
+                )
+            else:
+                when = "not scheduled"
+
+            label = reminder_service.recurrence_label(
+                reminder.recurrence_rule
+            )
+            repeat = f" [{label}]" if label else ""
+
+            lines.append(
+                f"{number}. {reminder.title}{repeat}\n"
+                f"   Next: {when} (id: {short_id})"
+            )
+
+        lines.append(
+            "\nTo cancel or snooze one, just tell me in chat "
+            "and give me its id."
+        )
+
+        await _send_long_message(message, "\n".join(lines))
+
+    except Exception:
+        logger.exception(
+            "Unable to list reminders for user %s",
+            user.id,
+        )
+
+        await message.reply_text(
+            "I couldn't load your reminders. Please try again."
         )
 
 
