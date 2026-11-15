@@ -832,3 +832,49 @@ class Task(TimestampMixin, Base):
             name="valid_task_status",
         ),
     )
+
+
+class ApiToken(Base):
+    __tablename__ = "api_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=new_uuid,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # SHA-256 hex digest of the raw bearer token. The raw token is
+    # shown to the user exactly once (by the /apitoken command) and
+    # is never stored anywhere.
+    token_hash: Mapped[str] = mapped_column(
+        String(64),
+        unique=True,
+        nullable=False,
+    )
+    label: Mapped[str] = mapped_column(
+        String(100),
+        default="dashboard",
+        nullable=False,
+    )
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    last_used_at: Mapped[DateTime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    revoked_at: Mapped[DateTime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_api_tokens_user",
+            "user_id",
+        ),
+    )
