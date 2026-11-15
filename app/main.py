@@ -1,7 +1,8 @@
 
+import asyncio
 import logging
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 
@@ -9,15 +10,41 @@ from app.api.health import router as health_router
 from app.api.webhook import router as webhook_router
 from app.bot import create_telegram_application
 from app.config import settings
-from app.database import close_database
+from app.database import close_database, get_session_factory
+from app.services.delivery_service import process_due_deliveries
 
 
 logger = logging.getLogger(__name__)
+
+DELIVERY_INTERVAL_SECONDS = 60
+
+
+async def _delivery_loop(bot) -> None:
+    """
+    Deliver due reminders every minute.
+
+    The first pass runs immediately at startup, which is the
+    catch-up mechanism for reminders that came due while the
+    service was asleep on Render: they are simply overdue jobs
+    and are delivered by that first pass. A failed pass is
+    logged and retried on the next tick; it never kills the loop.
+    """
+    while True:
+        try:
+            await process_due_deliveries(
+                get_session_factory(),
+                bot,
+            )
+        except Exception:
+            logger.exception("Reminder delivery pass failed.")
+
+        await asyncio.sleep(DELIVERY_INTERVAL_SECONDS)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     telegram_app = None
+    delivery_task = None
     initialized = False
     started = False
 
@@ -65,9 +92,18 @@ async def lifespan(app: FastAPI):
                 webhook_url,
             )
 
+            delivery_task = asyncio.create_task(
+                _delivery_loop(telegram_app.bot)
+            )
+
         yield
 
     finally:
+        if delivery_task is not None:
+            delivery_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await delivery_task
+
         if telegram_app is not None:
             app.state.telegram_application = None
 
