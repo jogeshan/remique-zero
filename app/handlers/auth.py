@@ -134,6 +134,10 @@ GENERAL
 /memories — List what I remember about you
 /remind TEXT — Set a reminder
 /reminders — List your reminders
+/expense AMOUNT NOTE — Quick-add an expense
+/income AMOUNT NOTE — Quick-add income
+/summary — Yesterday's money overview (or /summary today|week|month)
+/debts — Your open debts and loans
 
 You can also send me photos, voice messages and documents (PDF/text) and I will read them.
 
@@ -149,6 +153,10 @@ GENERAL
 /memories — List what I remember about you
 /remind TEXT — Set a reminder
 /reminders — List your reminders
+/expense AMOUNT NOTE — Quick-add an expense
+/income AMOUNT NOTE — Quick-add income
+/summary — Yesterday's money overview (or /summary today|week|month)
+/debts — Your open debts and loans
 
 You can also send me photos, voice messages and documents (PDF/text) and I will read them.
 
@@ -173,6 +181,10 @@ GENERAL
 /memories — List what I remember about you
 /remind TEXT — Set a reminder
 /reminders — List your reminders
+/expense AMOUNT NOTE — Quick-add an expense
+/income AMOUNT NOTE — Quick-add income
+/summary — Yesterday's money overview (or /summary today|week|month)
+/debts — Your open debts and loans
 
 You can also send me photos, voice messages and documents (PDF/text) and I will read them.
 
