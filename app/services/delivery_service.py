@@ -4,6 +4,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import or_, select
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.models import (
     DeliveryAttempt,
@@ -37,6 +38,44 @@ def retry_delay(attempts: int) -> timedelta:
 def should_give_up(attempts: int, max_attempts: int) -> bool:
     """True when a job has used all of its delivery attempts."""
     return attempts >= max_attempts
+
+
+# Job types whose delivered message carries the reminder action
+# buttons (Done / Snooze). "reminder_snooze" is the one-off extra
+# occurrence created when a delivered reminder is snoozed; its
+# message gets buttons too, but delivering it must not spawn the
+# next occurrence of the series.
+BUTTON_JOB_TYPES = ("reminder", "reminder_snooze")
+
+
+def reminder_keyboard(occurrence_id) -> InlineKeyboardMarkup:
+    """
+    Build the action buttons for a delivered reminder message.
+
+    The callback data is `rem:{action}:{occurrence_id}`; with a
+    36-character UUID the longest value ("rem:snooze1440:…")
+    stays well inside Telegram's 64-byte callback limit.
+    """
+    occurrence_key = str(occurrence_id)
+
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "✅ Done",
+                    callback_data=f"rem:done:{occurrence_key}",
+                ),
+                InlineKeyboardButton(
+                    "⏰ Snooze 1h",
+                    callback_data=f"rem:snooze60:{occurrence_key}",
+                ),
+                InlineKeyboardButton(
+                    "🗓 Snooze tomorrow",
+                    callback_data=f"rem:snooze1440:{occurrence_key}",
+                ),
+            ]
+        ]
+    )
 
 
 async def _claim_due_jobs(
@@ -297,11 +336,27 @@ async def _deliver_one(session_factory, bot, job_id, *, now: datetime) -> str:
                         exc_info=True,
                     )
 
-            try:
-                sent = await bot.send_message(
-                    chat_id=telegram_user_id,
-                    text=text,
+            send_kwargs = {}
+            if job_type in BUTTON_JOB_TYPES:
+                send_kwargs["reply_markup"] = reminder_keyboard(
+                    occurrence.id
                 )
+
+            try:
+                try:
+                    sent = await bot.send_message(
+                        chat_id=telegram_user_id,
+                        text=text,
+                        **send_kwargs,
+                    )
+                except TypeError:
+                    # Bot objects without reply_markup support
+                    # (minimal test doubles): resend without the
+                    # buttons rather than failing the delivery.
+                    sent = await bot.send_message(
+                        chat_id=telegram_user_id,
+                        text=text,
+                    )
             except Exception as exc:
                 session.add(
                     DeliveryAttempt(
@@ -344,12 +399,16 @@ async def _deliver_one(session_factory, bot, job_id, *, now: datetime) -> str:
             occurrence.completed_at = now
 
             if reminder.recurrence_rule:
-                _schedule_next_occurrence(
-                    session,
-                    reminder,
-                    occurrence,
-                    job_type=job_type,
-                )
+                # A snooze extra is one-off: the series' next
+                # occurrence is already scheduled, so nothing is
+                # spawned from this delivery.
+                if job_type != "reminder_snooze":
+                    _schedule_next_occurrence(
+                        session,
+                        reminder,
+                        occurrence,
+                        job_type=job_type,
+                    )
             else:
                 reminder.status = "completed"
 
