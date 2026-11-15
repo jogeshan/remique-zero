@@ -34,6 +34,7 @@ USER_BOT_COMMANDS = [
     BotCommand("tasks", "Your personal task list"),
     BotCommand("settings", "Timezone and language"),
     BotCommand("apitoken", "Get your web dashboard token"),
+    BotCommand("export", "Download your data as a JSON file"),
 ]
 
 

@@ -32,6 +32,10 @@ class Settings(BaseSettings):
 
     bootstrap_admin_telegram_id: str = ""
 
+    rate_limit_enabled: bool = True
+    api_rate_limit_per_minute: int = 120
+    webhook_rate_limit_per_minute: int = 600
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

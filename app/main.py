@@ -4,7 +4,9 @@ import logging
 import os
 from contextlib import asynccontextmanager, suppress
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.dashboard import api_router as dashboard_api_router
 from app.api.dashboard import page_router as dashboard_page_router
@@ -12,6 +14,7 @@ from app.api.health import router as health_router
 from app.api.webhook import router as webhook_router
 from app.bot import create_telegram_application
 from app.config import settings
+from app.middleware import RateLimitMiddleware, SecurityHeadersMiddleware
 from app.database import close_database, get_session_factory
 from app.services.delivery_service import process_due_deliveries
 
@@ -129,6 +132,40 @@ app.include_router(health_router)
 app.include_router(webhook_router)
 app.include_router(dashboard_api_router)
 app.include_router(dashboard_page_router)
+
+# Middleware added last runs outermost: security headers wrap
+# everything, including rate-limit 429 responses.
+app.add_middleware(RateLimitMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(
+    request: Request,
+    exc: StarletteHTTPException,
+):
+    """
+    Consistent error shape for the API: /api/* errors return
+    {"error": "..."} instead of FastAPI's {"detail": "..."}.
+    Other paths keep the default shape.
+    """
+    if request.url.path.startswith("/api/"):
+        detail = (
+            exc.detail
+            if isinstance(exc.detail, str)
+            else "Request failed."
+        )
+        return JSONResponse(
+            {"error": detail},
+            status_code=exc.status_code,
+            headers=exc.headers,
+        )
+
+    return JSONResponse(
+        {"detail": exc.detail},
+        status_code=exc.status_code,
+        headers=exc.headers,
+    )
 
 
 @app.get("/")
