@@ -1,3 +1,4 @@
+import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
@@ -26,6 +27,17 @@ MAX_HISTORY_MESSAGES = 10
 MAX_INPUT_CHARACTERS = 8000
 MAX_OUTPUT_TOKENS = 900
 MAX_TOOL_ROUNDS = 5
+
+# Tools that change backend state. Within a single AI request, an
+# identical repeat call reuses the first result instead of executing
+# again, so a duplicated function call cannot create duplicate
+# invitations or repeat an account change.
+MUTATING_TOOLS = {
+    "create_invite",
+    "revoke_invite",
+    "set_user_status",
+    "change_user_role",
+}
 
 
 def build_system_instruction(
@@ -488,6 +500,7 @@ async def _generate_with_tools(
     """
 
     tool_was_requested = False
+    executed_mutating: dict = {}
 
     try:
         for round_number in range(MAX_TOOL_ROUNDS + 1):
@@ -556,12 +569,34 @@ async def _generate_with_tools(
                     telegram_user_id,
                 )
 
-                result = await execute_ai_tool(
-                    session_factory,
-                    telegram_user_id=telegram_user_id,
-                    tool_name=function_name,
-                    arguments=function_arguments,
-                )
+                dedupe_key = None
+                if function_name in MUTATING_TOOLS:
+                    dedupe_key = (
+                        function_name,
+                        json.dumps(
+                            function_arguments,
+                            sort_keys=True,
+                            default=str,
+                        ),
+                    )
+
+                if dedupe_key is not None and dedupe_key in executed_mutating:
+                    logger.info(
+                        "Duplicate AI tool call skipped: name=%s actor=%s",
+                        function_name,
+                        telegram_user_id,
+                    )
+                    result = executed_mutating[dedupe_key]
+                else:
+                    result = await execute_ai_tool(
+                        session_factory,
+                        telegram_user_id=telegram_user_id,
+                        tool_name=function_name,
+                        arguments=function_arguments,
+                    )
+
+                    if dedupe_key is not None:
+                        executed_mutating[dedupe_key] = result
 
                 # NOTE: Part.from_function_response() does not accept an
                 # `id` argument in google-genai 1.x — passing one raises

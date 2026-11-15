@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
-from app.models import TelegramAccount, User
+from app.models import AdminAuditLog, TelegramAccount, User
 from app.services.admin_service import (
     create_admin_invite,
     get_user_statistics,
@@ -165,6 +165,51 @@ def _integer(
     return result
 
 
+async def _log_tool_execution(
+    session_factory,
+    *,
+    telegram_user_id: int,
+    tool_name: str,
+    result: dict,
+) -> None:
+    """
+    Write one AdminAuditLog row for a completed AI tool execution.
+
+    Runs in its own session after the tool has finished. Only the
+    outcome is recorded — never arguments or results, which may
+    contain invitation codes or other secrets. A failure here only
+    logs a warning; it must never change the tool result.
+    """
+    try:
+        async with session_factory() as session:
+            actor_user_id = await session.scalar(
+                select(TelegramAccount.user_id).where(
+                    TelegramAccount.telegram_user_id == telegram_user_id
+                )
+            )
+
+            session.add(
+                AdminAuditLog(
+                    actor_user_id=actor_user_id,
+                    action=f"ai_tool.{tool_name}",
+                    metadata_json={
+                        "success": bool(result.get("success")),
+                        "error": result.get("error"),
+                    },
+                )
+            )
+
+            await session.commit()
+
+    except Exception:
+        logger.warning(
+            "Failed to write AI tool audit log: tool=%s actor=%s",
+            tool_name,
+            telegram_user_id,
+            exc_info=True,
+        )
+
+
 async def execute_ai_tool(
     session_factory,
     *,
@@ -176,8 +221,33 @@ async def execute_ai_tool(
     Execute one Gemini-requested tool using the authenticated Telegram ID.
 
     Gemini is never allowed to supply or override the acting user's ID.
-    Existing backend services enforce all permissions.
+    Existing backend services enforce all permissions. Every outcome
+    (success or failure) is recorded in the admin audit log.
     """
+    result = await _execute_ai_tool(
+        session_factory,
+        telegram_user_id=telegram_user_id,
+        tool_name=tool_name,
+        arguments=arguments,
+    )
+
+    await _log_tool_execution(
+        session_factory,
+        telegram_user_id=telegram_user_id,
+        tool_name=tool_name,
+        result=result,
+    )
+
+    return result
+
+
+async def _execute_ai_tool(
+    session_factory,
+    *,
+    telegram_user_id: int,
+    tool_name: str,
+    arguments: dict | None,
+) -> dict:
     arguments = arguments or {}
 
     if not isinstance(arguments, dict):
@@ -240,6 +310,9 @@ async def execute_ai_tool(
                 if not revoked:
                     return {
                         "success": False,
+                        "error": (
+                            "Invitation was not found or was already revoked."
+                        ),
                         "message": (
                             "Invitation was not found or was already revoked."
                         ),
@@ -330,13 +403,23 @@ async def execute_ai_tool(
                     new_status=status,
                 )
 
+                if changed:
+                    return {
+                        "success": True,
+                        "message": f"User account {status} successfully.",
+                        "target_telegram_id": target_id,
+                        "status": status,
+                    }
+
+                no_change = (
+                    "No account change was made. The user may not exist "
+                    "or may already have this status."
+                )
+
                 return {
-                    "success": changed,
-                    "message": (
-                        f"User account {status} successfully."
-                        if changed
-                        else "No account change was made. The user may not exist or may already have this status."
-                    ),
+                    "success": False,
+                    "error": no_change,
+                    "message": no_change,
                     "target_telegram_id": target_id,
                     "status": status,
                 }
@@ -360,13 +443,23 @@ async def execute_ai_tool(
                     new_role=role,
                 )
 
+                if changed:
+                    return {
+                        "success": True,
+                        "message": f"User role changed to {role} successfully.",
+                        "target_telegram_id": target_id,
+                        "role": role,
+                    }
+
+                no_change = (
+                    "No role change was made. The user may not exist "
+                    "or may already have this role."
+                )
+
                 return {
-                    "success": changed,
-                    "message": (
-                        f"User role changed to {role} successfully."
-                        if changed
-                        else "No role change was made. The user may not exist or may already have this role."
-                    ),
+                    "success": False,
+                    "error": no_change,
+                    "message": no_change,
                     "target_telegram_id": target_id,
                     "role": role,
                 }
