@@ -223,6 +223,7 @@ async def _handle_media_message(
             prompt=prompt,
             history=history,
             attachments=[(mime_type, data)],
+            conversation_id=conversation_id,
         )
 
         try:

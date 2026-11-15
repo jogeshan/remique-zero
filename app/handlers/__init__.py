@@ -25,6 +25,7 @@ from app.handlers.ai import (
     newchat_command,
     remind_command,
     reminders_command,
+    tasks_command,
 )
 from app.handlers.media import (
     document_message_handler,
@@ -56,6 +57,7 @@ def register_handlers(application: Application) -> None:
         ("income", income_command),
         ("summary", summary_command),
         ("debts", debts_command),
+        ("tasks", tasks_command),
         ("settings", settings_command),
         ("invite", invite_command),
         ("revoke", revoke_command),

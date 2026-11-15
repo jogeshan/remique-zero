@@ -29,7 +29,7 @@ from app.services.conversation_service import (
 )
 
 from app.handlers.text_utils import reply_long
-from app.services import memory_service, reminder_service
+from app.services import memory_service, reminder_service, task_service
 
 
 logger = logging.getLogger(__name__)
@@ -367,6 +367,94 @@ async def reminders_command(
         )
 
 
+async def tasks_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    message = update.effective_message
+    user = update.effective_user
+    chat = update.effective_chat
+
+    if not message or not user or not chat:
+        return
+
+    if chat.type != "private":
+        await message.reply_text(
+            "Please use /tasks in a private conversation."
+        )
+        return
+
+    try:
+        session_factory = get_session_factory()
+
+        async with session_factory() as session:
+            account = await memory_service.get_active_user_by_telegram_id(
+                session,
+                user.id,
+            )
+
+            if account is None:
+                await message.reply_text(
+                    "Your Remique Zero account is not active. "
+                    "Please contact the administrator."
+                )
+                return
+
+            tz_name = await _get_user_timezone_name(session, account.id)
+            tz = _user_zone(tz_name)
+
+            tasks = await task_service.list_tasks(
+                session,
+                account.id,
+                status="open",
+            )
+
+        if not tasks:
+            await message.reply_text(
+                "Your task list is empty. 🎉\n\n"
+                "Tell me in chat, like \"add to my list: book "
+                "the train tickets\", and I'll track it here."
+            )
+            return
+
+        lines = ["📋 Your tasks:\n"]
+
+        for number, task in enumerate(tasks, start=1):
+            short_id = str(task.id)[:8]
+            line = f"{number}. {task.title} (id: {short_id})"
+
+            if task.due_at is not None:
+                due = task.due_at.astimezone(tz).strftime(
+                    "%a %d %b %Y, %H:%M"
+                )
+                line += f"\n   Due: {due}"
+
+            if task.notes:
+                notes = " ".join(task.notes.split())
+                if len(notes) > 120:
+                    notes = notes[:117].rstrip() + "…"
+                line += f"\n   {notes}"
+
+            lines.append(line)
+
+        lines.append(
+            "\nTo finish or remove one, just tell me in chat "
+            "and give me its id."
+        )
+
+        await _send_long_message(message, "\n".join(lines))
+
+    except Exception:
+        logger.exception(
+            "Unable to list tasks for user %s",
+            user.id,
+        )
+
+        await message.reply_text(
+            "I couldn't load your tasks. Please try again."
+        )
+
+
 async def ai_message_handler(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -419,6 +507,7 @@ async def ai_message_handler(
             telegram_user_id=user.id,
             prompt=prompt,
             history=history,
+            conversation_id=conversation_id,
         )
 
         try:
