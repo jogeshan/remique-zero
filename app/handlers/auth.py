@@ -132,6 +132,8 @@ GENERAL
 /help — Show commands
 /newchat — Start a new conversation
 /memories — List what I remember about you
+/remind TEXT — Set a reminder
+/reminders — List your reminders
 
 Your personal assistant is ready to help you."""
 
@@ -143,6 +145,8 @@ GENERAL
 /help — Show commands
 /newchat — Start a new conversation
 /memories — List what I remember about you
+/remind TEXT — Set a reminder
+/reminders — List your reminders
 
 ADMINISTRATION
 /invite [uses] [expiry_days] — Generate invitation
@@ -163,6 +167,8 @@ GENERAL
 /help — Show commands
 /newchat — Start a new conversation
 /memories — List what I remember about you
+/remind TEXT — Set a reminder
+/reminders — List your reminders
 
 ADMINISTRATION
 /invite [uses] [expiry_days] — Generate invitation

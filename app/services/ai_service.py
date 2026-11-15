@@ -46,6 +46,7 @@ def build_system_instruction(
     display_name: str | None = None,
     timezone_name: str | None = None,
     memories_text: str | None = None,
+    now_local: datetime | None = None,
 ) -> str:
 
     role_descriptions = {
@@ -106,11 +107,9 @@ IMPLEMENTED:
 - Persistent conversation history (use /newchat to start fresh; the previous conversation is preserved).
 - Administrative backend function calling.
 - Persistent personal memory: every user can ask you to remember, recall, and forget personal facts and preferences, stored per user across conversations.
+- Reminders: every user can create one-time and recurring (daily, weekly, weekdays) reminders in their own timezone, delivered as Telegram messages. Reminders that come due while the service is asleep are delivered when it wakes.
 
 NOT YET IMPLEMENTED:
-- Reminder creation and scheduling.
-- Automatic reminder delivery.
-- Reminder snoozing and recurring schedules.
 - Voice message processing.
 - Image interpretation.
 
@@ -160,8 +159,24 @@ MEMORY RULES:
 
 REMINDER RULES:
 
-Reminder scheduling and automatic delivery are not implemented.
-Never claim that a reminder has been saved or scheduled.
+- Reminders are implemented. When the user asks to be reminded
+  about something, call create_reminder instead of only
+  acknowledging it in text.
+- Resolve relative times ("tomorrow", "in 2 hours", "next
+  Sunday") against the current date and time given in these
+  instructions, in the user's timezone, and pass first_run_at
+  as an ISO 8601 timestamp WITH the timezone offset (for
+  example 2026-11-16T09:00:00+06:00).
+- After creating a reminder, confirm it back to the user with
+  the local date and time from the tool result.
+- Use list_reminders to show the user's reminders,
+  cancel_reminder to cancel one, and snooze_reminder to delay
+  one. These tools only ever operate on the speaking user's
+  own reminders.
+- Recurrence must be one of: daily, weekly, weekdays. Omit it
+  for one-time reminders.
+- Never claim a reminder was created until the tool confirms
+  success.
 
 CONVERSATION RULES:
 
@@ -180,8 +195,18 @@ Python services enforce permissions and perform actual operations.
         "You are Remique Zero, a helpful personal AI assistant.\n\n"
         f"Authenticated user: {display_name or 'Telegram user'}\n"
         f"Authenticated role: {role}\n"
-        f"User timezone: {timezone_name or 'Unknown'}\n\n"
-        f"{role_descriptions[role]}\n"
+        f"User timezone: {timezone_name or 'Unknown'}\n"
+    )
+
+    if now_local is not None:
+        instruction += (
+            "Current date and time for the user: "
+            f"{now_local.strftime('%A %d %B %Y, %H:%M')} "
+            f"({timezone_name or 'Unknown'})\n"
+        )
+
+    instruction += (
+        f"\n{role_descriptions[role]}\n"
         f"{capabilities}"
     )
 
@@ -748,11 +773,16 @@ async def generate_ai_reply(
             prompt.strip(),
         )
 
+        now_local = datetime.now(
+            _get_user_timezone(timezone_name)
+        )
+
         system_instruction = build_system_instruction(
             role=user_role,
             display_name=display_name,
             timezone_name=timezone_name,
             memories_text=memories_text,
+            now_local=now_local,
         )
 
         async with genai.Client(

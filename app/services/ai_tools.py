@@ -1,11 +1,13 @@
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
-from app.models import AdminAuditLog, TelegramAccount, User
-from app.services import memory_service
+from app.config import settings
+from app.models import AdminAuditLog, TelegramAccount, User, UserSetting
+from app.services import memory_service, reminder_service
 from app.services.admin_service import (
     create_admin_invite,
     get_user_statistics,
@@ -203,6 +205,96 @@ TOOL_DECLARATIONS = [
             "required": ["memory_id"],
         },
     },
+    {
+        "name": "create_reminder",
+        "description": (
+            "Create a reminder for the calling user. Available to "
+            "every user, for their own reminders only. The reminder "
+            "is delivered as a Telegram message at the requested "
+            "time."
+        ),
+        "parameters_json_schema": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "What the user wants to be reminded about.",
+                },
+                "first_run_at": {
+                    "type": "string",
+                    "description": (
+                        "When the reminder first fires, as an ISO 8601 "
+                        "timestamp WITH a timezone offset, resolved in "
+                        "the user's timezone (for example "
+                        "2026-11-16T09:00:00+06:00)."
+                    ),
+                },
+                "recurrence": {
+                    "type": "string",
+                    "enum": ["daily", "weekly", "weekdays"],
+                    "description": (
+                        "Optional repeat schedule. Omit for a "
+                        "one-time reminder."
+                    ),
+                },
+            },
+            "required": ["title", "first_run_at"],
+        },
+    },
+    {
+        "name": "list_reminders",
+        "description": (
+            "List the calling user's active reminders with their "
+            "next delivery times. Available to every user, for "
+            "their own reminders only."
+        ),
+        "parameters_json_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "cancel_reminder",
+        "description": (
+            "Cancel one of the calling user's reminders by its "
+            "reminder ID (from list_reminders). A user can only "
+            "cancel their own reminders."
+        ),
+        "parameters_json_schema": {
+            "type": "object",
+            "properties": {
+                "reminder_id": {
+                    "type": "string",
+                    "description": "The reminder ID returned by list_reminders.",
+                }
+            },
+            "required": ["reminder_id"],
+        },
+    },
+    {
+        "name": "snooze_reminder",
+        "description": (
+            "Delay the next delivery of one of the calling user's "
+            "reminders by a number of minutes. A user can only "
+            "snooze their own reminders."
+        ),
+        "parameters_json_schema": {
+            "type": "object",
+            "properties": {
+                "reminder_id": {
+                    "type": "string",
+                    "description": "The reminder ID returned by list_reminders.",
+                },
+                "minutes": {
+                    "type": "integer",
+                    "description": "Minutes to delay by. Defaults to 10.",
+                    "minimum": 1,
+                    "maximum": 10080,
+                },
+            },
+            "required": ["reminder_id"],
+        },
+    },
 ]
 
 
@@ -262,6 +354,81 @@ def _memory_to_dict(memory) -> dict:
             else None
         ),
     }
+
+
+async def _reminder_actor(session, telegram_user_id: int):
+    """
+    Resolve the acting user for the reminder tools.
+
+    Reminders are personal data: the tools only ever operate on
+    the caller's own reminders, resolved from the authenticated
+    Telegram ID — arguments can never name another user.
+    """
+    return await _memory_actor(session, telegram_user_id)
+
+
+async def _user_timezone_name(session, user_id) -> str:
+    """Return the user's configured timezone name (or the default)."""
+    tz_name = await session.scalar(
+        select(UserSetting.timezone).where(
+            UserSetting.user_id == user_id
+        )
+    )
+    return tz_name or settings.default_timezone
+
+
+def _format_local_time(value: datetime, tz_name: str) -> str:
+    """Render a UTC datetime in the user's timezone for display."""
+    local = value.astimezone(ZoneInfo(tz_name))
+    return local.strftime("%a %d %b %Y, %H:%M") + f" ({tz_name})"
+
+
+def _reminder_to_dict(reminder, next_at, tz_name: str) -> dict:
+    return {
+        "id": str(reminder.id),
+        "title": reminder.title,
+        "recurrence": reminder_service.recurrence_label(
+            reminder.recurrence_rule
+        ),
+        "next_at": next_at.isoformat() if next_at else None,
+        "next_at_local": (
+            _format_local_time(next_at, tz_name) if next_at else None
+        ),
+    }
+
+
+async def _resolve_reminder_id(session, user_id, raw) -> UUID | None:
+    """
+    Resolve a reminder ID argument to a UUID owned by the user.
+
+    Accepts the full UUID from list_reminders, or an unambiguous
+    short prefix of one of the user's active reminder IDs (the
+    short form shown by the /reminders command).
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError("A valid reminder_id is required.")
+
+    text = raw.strip()
+
+    try:
+        return UUID(text)
+    except ValueError:
+        pass
+
+    if len(text) >= 6:
+        pairs = await reminder_service.list_active_reminders(
+            session,
+            user_id,
+        )
+        matches = [
+            reminder
+            for reminder, _ in pairs
+            if str(reminder.id).startswith(text.lower())
+        ]
+        if len(matches) == 1:
+            return matches[0].id
+
+    return None
 async def _log_tool_execution(
     session_factory,
     *,
@@ -657,6 +824,212 @@ async def _execute_ai_tool(
                 return {
                     "success": True,
                     "message": "Memory deleted.",
+                }
+
+            if tool_name == "create_reminder":
+                title = arguments.get("title")
+
+                if not isinstance(title, str) or not title.strip():
+                    raise ValueError(
+                        "A non-empty reminder title is required."
+                    )
+
+                raw_when = arguments.get("first_run_at")
+
+                if not isinstance(raw_when, str) or not raw_when.strip():
+                    raise ValueError(
+                        "first_run_at must be an ISO 8601 timestamp "
+                        "with a timezone offset."
+                    )
+
+                when_text = raw_when.strip()
+                if when_text.endswith(("Z", "z")):
+                    when_text = when_text[:-1] + "+00:00"
+
+                try:
+                    first_run = datetime.fromisoformat(when_text)
+                except ValueError:
+                    raise ValueError(
+                        "first_run_at must be an ISO 8601 timestamp "
+                        "with a timezone offset."
+                    ) from None
+
+                user, error = await _reminder_actor(
+                    session,
+                    telegram_user_id,
+                )
+                if error is not None:
+                    return error
+
+                tz_name = await _user_timezone_name(session, user.id)
+
+                if first_run.tzinfo is None:
+                    first_run = first_run.replace(
+                        tzinfo=ZoneInfo(tz_name)
+                    )
+
+                first_run_utc = first_run.astimezone(timezone.utc)
+
+                # A small grace window absorbs clock skew and the
+                # time Gemini spends resolving relative phrases.
+                if first_run_utc < datetime.now(
+                    timezone.utc
+                ) - timedelta(seconds=60):
+                    return {
+                        "success": False,
+                        "error": (
+                            "That reminder time is in the past. "
+                            "Please choose a future time."
+                        ),
+                    }
+
+                recurrence = arguments.get("recurrence")
+                # Raises ValueError for anything outside the enum.
+                reminder_service.parse_recurrence(recurrence)
+
+                reminder = await reminder_service.create_reminder(
+                    session,
+                    user,
+                    title=title.strip(),
+                    first_run_at=first_run_utc,
+                    recurrence=recurrence,
+                    timezone_name=tz_name,
+                )
+
+                return {
+                    "success": True,
+                    "message": "Reminder created.",
+                    "reminder": {
+                        "id": str(reminder.id),
+                        "title": reminder.title,
+                        "recurrence": reminder_service.recurrence_label(
+                            reminder.recurrence_rule
+                        ),
+                        "first_run_at": first_run_utc.isoformat(),
+                        "first_run_local": _format_local_time(
+                            first_run_utc,
+                            tz_name,
+                        ),
+                    },
+                }
+
+            if tool_name == "list_reminders":
+                user, error = await _reminder_actor(
+                    session,
+                    telegram_user_id,
+                )
+                if error is not None:
+                    return error
+
+                tz_name = await _user_timezone_name(session, user.id)
+
+                pairs = await reminder_service.list_active_reminders(
+                    session,
+                    user.id,
+                )
+
+                return {
+                    "success": True,
+                    "count": len(pairs),
+                    "reminders": [
+                        _reminder_to_dict(reminder, next_at, tz_name)
+                        for reminder, next_at in pairs
+                    ],
+                }
+
+            if tool_name == "cancel_reminder":
+                user, error = await _reminder_actor(
+                    session,
+                    telegram_user_id,
+                )
+                if error is not None:
+                    return error
+
+                reminder_id = await _resolve_reminder_id(
+                    session,
+                    user.id,
+                    arguments.get("reminder_id"),
+                )
+
+                if reminder_id is None:
+                    return {
+                        "success": False,
+                        "error": (
+                            "That reminder was not found among "
+                            "your reminders."
+                        ),
+                    }
+
+                cancelled = await reminder_service.cancel_reminder(
+                    session,
+                    user.id,
+                    reminder_id,
+                )
+
+                if not cancelled:
+                    return {
+                        "success": False,
+                        "error": (
+                            "That reminder was not found among "
+                            "your reminders."
+                        ),
+                    }
+
+                return {
+                    "success": True,
+                    "message": "Reminder cancelled.",
+                }
+
+            if tool_name == "snooze_reminder":
+                minutes = _integer(
+                    arguments.get("minutes", 10),
+                    "minutes",
+                    minimum=1,
+                    maximum=10080,
+                )
+
+                user, error = await _reminder_actor(
+                    session,
+                    telegram_user_id,
+                )
+                if error is not None:
+                    return error
+
+                reminder_id = await _resolve_reminder_id(
+                    session,
+                    user.id,
+                    arguments.get("reminder_id"),
+                )
+
+                if reminder_id is None:
+                    return {
+                        "success": False,
+                        "error": (
+                            "That reminder was not found among "
+                            "your reminders."
+                        ),
+                    }
+
+                snoozed = await reminder_service.snooze_occurrence(
+                    session,
+                    user.id,
+                    reminder_id,
+                    minutes,
+                )
+
+                if not snoozed:
+                    return {
+                        "success": False,
+                        "error": (
+                            "That reminder has no scheduled "
+                            "delivery left to snooze."
+                        ),
+                    }
+
+                return {
+                    "success": True,
+                    "message": f"Reminder snoozed by {minutes} minutes.",
+                    "minutes": minutes,
                 }
 
             return {
