@@ -38,6 +38,11 @@ MUTATING_TOOLS = {
     "revoke_invite",
     "set_user_status",
     "change_user_role",
+    "add_transaction",
+    "add_debt",
+    "record_debt_payment",
+    "set_expense_reminders",
+    "set_daily_overview",
 }
 
 
@@ -109,6 +114,7 @@ IMPLEMENTED:
 - Persistent personal memory: every user can ask you to remember, recall, and forget personal facts and preferences, stored per user across conversations.
 - Reminders: every user can create one-time and recurring (daily, weekly, weekdays) reminders in their own timezone, delivered as Telegram messages. Reminders that come due while the service is asleep are delivered when it wakes.
 - Multimodal input: users can send photos and images for you to interpret, voice messages and audio (Bangla, English, or Banglish — the message is transcribed for you and you respond in the same language the user used), and PDF or plain-text documents for you to read, summarize, and answer questions about.
+- Expense tracking: every user can log income and expenses by category, track money they borrowed or lent (debts and loans) with partial repayments, and get totals and breakdowns per period. Users can enable expense check-in reminders several times a day and a morning overview of yesterday's money.
 
 ADMINISTRATIVE TOOL RULES:
 
@@ -174,6 +180,34 @@ REMINDER RULES:
   for one-time reminders.
 - Never claim a reminder was created until the tool confirms
   success.
+
+FINANCE RULES:
+
+- Expense tracking is implemented. When the user mentions
+  spending, earning, borrowing, or lending money, call the
+  finance tools instead of only acknowledging it in text.
+- add_transaction records money movement: type is "income" or
+  "expense". Choose the category from the context of what the
+  user said. Expense categories: Food, Transport, Shopping,
+  Bills, Rent, Health, Entertainment, Education, Family, Other.
+  Income categories: Salary, Business, Freelance, Gift, Other.
+- Amounts are in BDT (taka) unless the user says another
+  currency.
+- After adding a transaction, confirm briefly with the amount
+  and category from the tool result.
+- For questions like "how much did I spend this month?", use
+  get_finance_summary or list_transactions. Never invent
+  amounts, totals, or transactions.
+- Debts and loans: "borrowed" means the user owes the other
+  person; "lent" means the other person owes the user. Use
+  add_debt when money is borrowed or lent, record_debt_payment
+  when a debt is (partly) repaid, and list_debts to show what
+  is still open.
+- Expense check-ins: set_expense_reminders turns the daily
+  "log your expenses" nudges on or off (1 to 8 times a day).
+- Daily overview: get_daily_overview shows the money overview
+  for yesterday (or today); set_daily_overview manages the
+  automatic morning delivery of yesterday's overview.
 
 CONVERSATION RULES:
 
