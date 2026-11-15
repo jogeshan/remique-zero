@@ -588,3 +588,35 @@ class ConversationMessage(Base):
             name="valid_conversation_message_role",
         ),
     )
+
+
+class UserMemory(TimestampMixin, Base):
+    __tablename__ = "user_memories"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=new_uuid,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    content: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+    )
+    category: Mapped[str] = mapped_column(
+        String(50),
+        default="fact",
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_user_memories_user_created",
+            "user_id",
+            "created_at",
+        ),
+    )
