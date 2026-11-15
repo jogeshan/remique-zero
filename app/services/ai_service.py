@@ -45,6 +45,12 @@ MUTATING_TOOLS = {
     "set_daily_overview",
 }
 
+# Human-readable names for the language codes offered in
+# /settings, used in the system instruction.
+LANGUAGE_NAMES = {
+    "bn": "Bangla (Bengali)",
+}
+
 
 def build_system_instruction(
     role: str,
@@ -52,6 +58,7 @@ def build_system_instruction(
     timezone_name: str | None = None,
     memories_text: str | None = None,
     now_local: datetime | None = None,
+    language: str | None = None,
 ) -> str:
 
     role_descriptions = {
@@ -248,6 +255,14 @@ Python services enforce permissions and perform actual operations.
             "This is stored memory from earlier conversations. "
             "Use it when it is relevant, and tell the user they can "
             "ask you to update or delete any of it at any time."
+        )
+
+    if language and language != "en":
+        language_name = LANGUAGE_NAMES.get(language, language)
+        instruction += (
+            f"\n\nThe user's preferred language is {language_name}. "
+            "Prefer replying in that language unless the user "
+            "writes in a different language."
         )
 
     return instruction
@@ -776,6 +791,42 @@ async def _load_memories_text(
         return None
 
 
+async def _load_user_language(
+    session_factory,
+    telegram_user_id: int,
+) -> str | None:
+    """
+    Load the user's preferred language from their settings.
+
+    Like memories, this is an enhancement, never a dependency:
+    any failure is logged and treated as "no preference" so
+    chat keeps working.
+    """
+    try:
+        async with session_factory() as session:
+            user = await memory_service.get_active_user_by_telegram_id(
+                session,
+                telegram_user_id,
+            )
+
+            if user is None:
+                return None
+
+            return await session.scalar(
+                select(UserSetting.language).where(
+                    UserSetting.user_id == user.id
+                )
+            )
+
+    except Exception:
+        logger.exception(
+            "Unable to load language for Telegram user %s; "
+            "continuing without it.",
+            telegram_user_id,
+        )
+        return None
+
+
 async def generate_ai_reply(
     session_factory,
     *,
@@ -821,6 +872,11 @@ async def generate_ai_reply(
         telegram_user_id,
     )
 
+    language = await _load_user_language(
+        session_factory,
+        telegram_user_id,
+    )
+
     started_at = perf_counter()
     selected_model = models[0]
     response = None
@@ -842,6 +898,7 @@ async def generate_ai_reply(
             timezone_name=timezone_name,
             memories_text=memories_text,
             now_local=now_local,
+            language=language,
         )
 
         async with genai.Client(

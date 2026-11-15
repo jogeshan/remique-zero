@@ -1,7 +1,7 @@
 import logging
 import re
 from datetime import datetime, timedelta, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 from dateparser.search import search_dates
@@ -305,6 +305,166 @@ async def snooze_occurrence(
     )
     if job is not None:
         job.run_at = job.run_at + delay
+
+    await session.commit()
+    return True
+
+
+async def get_reminder_occurrence(
+    session: AsyncSession,
+    occurrence_id: UUID,
+) -> tuple[ReminderOccurrence, Reminder] | None:
+    """
+    Load an occurrence together with its reminder, or None.
+
+    Used by the reminder action buttons, which address an
+    occurrence directly; ownership is the caller's to check
+    against reminder.user_id.
+    """
+    occurrence = await session.get(ReminderOccurrence, occurrence_id)
+
+    if occurrence is None:
+        return None
+
+    reminder = await session.get(Reminder, occurrence.reminder_id)
+
+    if reminder is None:
+        return None
+
+    return occurrence, reminder
+
+
+async def mark_occurrence_done(
+    session: AsyncSession,
+    user_id: UUID,
+    occurrence_id: UUID,
+) -> bool:
+    """
+    Mark a delivered occurrence as done (the ✅ Done button).
+
+    Only the occurrence itself changes: for a recurring reminder
+    the already-scheduled next occurrence stays untouched, and a
+    one-time reminder is completed. Returns False when the
+    occurrence does not exist, belongs to another user, or was
+    not in the delivered state.
+    """
+    pair = await get_reminder_occurrence(session, occurrence_id)
+
+    if pair is None:
+        return False
+
+    occurrence, reminder = pair
+
+    if reminder.user_id != user_id:
+        return False
+
+    if occurrence.status != "delivered":
+        return False
+
+    occurrence.status = "done"
+    occurrence.completed_at = datetime.now(timezone.utc)
+
+    if not reminder.recurrence_rule and reminder.status == "active":
+        reminder.status = "completed"
+
+    await session.commit()
+    return True
+
+
+async def snooze_delivered_occurrence(
+    session: AsyncSession,
+    user_id: UUID,
+    occurrence_id: UUID,
+    minutes: int,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """
+    Snooze the occurrence an action button was attached to.
+
+    A still-scheduled occurrence is simply moved forward by
+    `minutes`, together with its pending delivery job (the same
+    semantics as snooze_occurrence). A delivered occurrence can
+    no longer be moved, so a fresh one-off occurrence and
+    delivery job are created at now + `minutes` instead; a
+    one-time reminder that delivery marked completed becomes
+    active again. The extra job carries job_type
+    "reminder_snooze", which tells the delivery worker not to
+    spawn the next series occurrence from it, so snoozing a
+    recurring reminder never disturbs its regular schedule.
+    Returns False when the occurrence does not exist, belongs
+    to another user, or is already done/skipped.
+    """
+    pair = await get_reminder_occurrence(session, occurrence_id)
+
+    if pair is None:
+        return False
+
+    occurrence, reminder = pair
+
+    if reminder.user_id != user_id:
+        return False
+
+    delay = timedelta(minutes=minutes)
+
+    if occurrence.status == "scheduled":
+        if reminder.status != "active":
+            return False
+
+        occurrence.scheduled_for = occurrence.scheduled_for + delay
+
+        job = await session.scalar(
+            select(DeliveryJob).where(
+                DeliveryJob.occurrence_id == occurrence.id,
+                DeliveryJob.status == "pending",
+            )
+        )
+        if job is not None:
+            job.run_at = job.run_at + delay
+
+        await session.commit()
+        return True
+
+    if occurrence.status != "delivered":
+        return False
+
+    if reminder.recurrence_rule:
+        if reminder.status != "active":
+            return False
+    elif reminder.status not in ("active", "completed"):
+        return False
+
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+
+    run_at = now + delay
+
+    # The ID is assigned here rather than at flush time because
+    # the delivery job's idempotency key is built from it (the
+    # same pattern the delivery worker uses).
+    new_occurrence_id = uuid4()
+
+    session.add(
+        ReminderOccurrence(
+            id=new_occurrence_id,
+            reminder_id=reminder.id,
+            scheduled_for=run_at,
+            status="scheduled",
+        )
+    )
+    session.add(
+        DeliveryJob(
+            occurrence_id=new_occurrence_id,
+            job_type="reminder_snooze",
+            run_at=run_at,
+            status="pending",
+            idempotency_key=f"reminder:{new_occurrence_id}",
+        )
+    )
+
+    if not reminder.recurrence_rule:
+        reminder.status = "active"
 
     await session.commit()
     return True

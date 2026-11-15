@@ -10,17 +10,14 @@ from telegram.ext import ContextTypes
 from app.config import settings
 from app.database import get_session_factory
 from app.models import UserSetting
+from app.handlers.text_utils import reply_long
 from app.services import finance_service, memory_service
 
 logger = logging.getLogger(__name__)
 
-MAX_TELEGRAM_MESSAGE_LENGTH = 4000
-
 
 async def _send_long_message(message, text: str) -> None:
-    for start in range(0, len(text), MAX_TELEGRAM_MESSAGE_LENGTH):
-        chunk = text[start:start + MAX_TELEGRAM_MESSAGE_LENGTH]
-        await message.reply_text(chunk)
+    await reply_long(message, text)
 
 
 async def _get_user_timezone_name(session, user_id) -> str:

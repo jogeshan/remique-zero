@@ -28,19 +28,17 @@ from app.services.conversation_service import (
     start_new_conversation,
 )
 
+from app.handlers.text_utils import reply_long
 from app.services import memory_service, reminder_service
 
 
 logger = logging.getLogger(__name__)
 
-MAX_TELEGRAM_MESSAGE_LENGTH = 4000
 MAX_INPUT_CHARACTERS = 8000
 
 
 async def _send_long_message(message, text: str) -> None:
-    for start in range(0, len(text), MAX_TELEGRAM_MESSAGE_LENGTH):
-        chunk = text[start:start + MAX_TELEGRAM_MESSAGE_LENGTH]
-        await message.reply_text(chunk)
+    await reply_long(message, text)
 
 
 async def newchat_command(
