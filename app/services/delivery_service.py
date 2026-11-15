@@ -23,6 +23,11 @@ LOCK_DURATION = timedelta(minutes=5)
 # N * RETRY_BACKOFF_UNIT later, until max_attempts is reached.
 RETRY_BACKOFF_UNIT = timedelta(minutes=5)
 
+# Expense check-in nudges are skipped when the user has already
+# logged a transaction within this window — nagging someone who
+# just tracked their spending would only annoy them.
+RECENT_ACTIVITY_WINDOW = timedelta(hours=3)
+
 
 def retry_delay(attempts: int) -> timedelta:
     """Backoff before the next try after `attempts` failed tries."""
@@ -84,7 +89,13 @@ async def _claim_due_jobs(
     return [job.id for job in jobs]
 
 
-def _schedule_next_occurrence(session, reminder, delivered) -> None:
+def _schedule_next_occurrence(
+    session,
+    reminder,
+    delivered,
+    *,
+    job_type: str = "reminder",
+) -> None:
     """
     Create the next occurrence (and its delivery job) for a
     recurring reminder after one occurrence was delivered.
@@ -94,7 +105,9 @@ def _schedule_next_occurrence(session, reminder, delivered) -> None:
     after downtime does not drift, and the unique
     (reminder_id, scheduled_for) constraint plus the idempotency
     key keep duplicates out. Recurrence math runs in the
-    reminder's local timezone.
+    reminder's local timezone. The follow-up job keeps the
+    delivered job's type, so special deliveries (expense nudges,
+    the daily overview) stay special on every recurrence.
     """
     from app.services.reminder_service import compute_next_occurrence
 
@@ -128,12 +141,41 @@ def _schedule_next_occurrence(session, reminder, delivered) -> None:
     session.add(
         DeliveryJob(
             occurrence_id=occurrence_id,
-            job_type="reminder",
+            job_type=job_type,
             run_at=next_utc,
             status="pending",
             idempotency_key=f"reminder:{occurrence_id}",
         )
     )
+
+
+async def _recent_finance_activity(session, user_id, now: datetime) -> bool:
+    """
+    True when the user logged a transaction within the recent
+    activity window. Any failure answers False (send the nudge):
+    a broken check must never swallow a delivery.
+    """
+    try:
+        from app.services import finance_service
+
+        last = await finance_service.last_transaction_time(
+            session,
+            user_id,
+        )
+    except Exception:
+        logger.warning(
+            "Expense nudge activity check failed; sending anyway.",
+            exc_info=True,
+        )
+        return False
+
+    if last is None:
+        return False
+
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+
+    return now - last < RECENT_ACTIVITY_WINDOW
 
 
 async def _deliver_one(session_factory, bot, job_id, *, now: datetime) -> str:
@@ -175,6 +217,46 @@ async def _deliver_one(session_factory, bot, job_id, *, now: datetime) -> str:
                 await session.commit()
                 return "cancelled"
 
+            job_type = getattr(job, "job_type", None) or "reminder"
+
+            # Expense check-in nudges are pointless when the user
+            # has just logged something: mark the occurrence
+            # delivered without sending, and keep the schedule.
+            if job_type == "expense_nudge" and (
+                await _recent_finance_activity(
+                    session,
+                    reminder.user_id,
+                    now,
+                )
+            ):
+                session.add(
+                    DeliveryAttempt(
+                        job_id=job.id,
+                        result="skipped",
+                        error_message="recent activity",
+                    )
+                )
+                job.status = "succeeded"
+                job.locked_until = None
+                job.locked_by = None
+                job.last_error = None
+
+                occurrence.status = "delivered"
+                occurrence.completed_at = now
+
+                if reminder.recurrence_rule:
+                    _schedule_next_occurrence(
+                        session,
+                        reminder,
+                        occurrence,
+                        job_type=job_type,
+                    )
+                else:
+                    reminder.status = "completed"
+
+                await session.commit()
+                return "succeeded"
+
             telegram_user_id = await session.scalar(
                 select(TelegramAccount.telegram_user_id).where(
                     TelegramAccount.user_id == reminder.user_id
@@ -189,6 +271,31 @@ async def _deliver_one(session_factory, bot, job_id, *, now: datetime) -> str:
             text = f"⏰ Reminder: {reminder.title}"
             if reminder.description:
                 text += f"\n{reminder.description}"
+
+            # The morning overview renders yesterday's money at
+            # send time; the static reminder text is only a
+            # fallback if building it fails.
+            if job_type == "daily_overview":
+                try:
+                    from app.services import finance_service
+
+                    overview = (
+                        await finance_service.build_yesterday_overview(
+                            session,
+                            reminder.user_id,
+                            ZoneInfo(reminder.timezone),
+                            now,
+                        )
+                    )
+                    if overview:
+                        text = overview
+                except Exception:
+                    logger.warning(
+                        "Failed to build daily overview for user %s; "
+                        "sending the fallback reminder text.",
+                        reminder.user_id,
+                        exc_info=True,
+                    )
 
             try:
                 sent = await bot.send_message(
@@ -237,7 +344,12 @@ async def _deliver_one(session_factory, bot, job_id, *, now: datetime) -> str:
             occurrence.completed_at = now
 
             if reminder.recurrence_rule:
-                _schedule_next_occurrence(session, reminder, occurrence)
+                _schedule_next_occurrence(
+                    session,
+                    reminder,
+                    occurrence,
+                    job_type=job_type,
+                )
             else:
                 reminder.status = "completed"
 

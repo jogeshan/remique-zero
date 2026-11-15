@@ -30,6 +30,12 @@ from app.handlers.media import (
     photo_message_handler,
     voice_message_handler,
 )
+from app.handlers.finance import (
+    debts_command,
+    expense_command,
+    income_command,
+    summary_command,
+)
 
 
 def register_handlers(application: Application) -> None:
@@ -40,6 +46,10 @@ def register_handlers(application: Application) -> None:
         ("memories", memories_command),
         ("remind", remind_command),
         ("reminders", reminders_command),
+        ("expense", expense_command),
+        ("income", income_command),
+        ("summary", summary_command),
+        ("debts", debts_command),
         ("invite", invite_command),
         ("revoke", revoke_command),
         ("users", users_command),

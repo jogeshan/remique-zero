@@ -116,6 +116,7 @@ async def create_reminder(
     recurrence: str | None = None,
     description: str | None = None,
     timezone_name: str | None = None,
+    job_type: str = "reminder",
 ) -> Reminder:
     """
     Create a reminder with its first occurrence and delivery job.
@@ -124,6 +125,9 @@ async def create_reminder(
     "weekdays"); the RRULE string is what gets stored. All times are
     persisted in UTC; the reminder keeps the user's timezone name so
     recurrence math and rendering can use local wall-clock time.
+    `job_type` tags the delivery job; the delivery worker treats
+    special types (expense nudges, the daily overview) differently
+    from plain reminders.
     """
     tz_name = timezone_name or settings.default_timezone
     tz = ZoneInfo(tz_name)
@@ -152,7 +156,7 @@ async def create_reminder(
     session.add(
         DeliveryJob(
             occurrence_id=occurrence.id,
-            job_type="reminder",
+            job_type=job_type,
             run_at=first_run_utc,
             status="pending",
             idempotency_key=f"reminder:{occurrence.id}",
