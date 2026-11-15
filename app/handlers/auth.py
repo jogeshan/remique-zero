@@ -150,6 +150,7 @@ GENERAL
 /tasks — Your personal task list
 /settings — Timezone and language
 /apitoken — Get a token for the web dashboard
+/export — Download your data as a JSON file
 
 You can also send me photos, voice messages and documents (PDF/text) and I will read them.
 
@@ -172,6 +173,7 @@ GENERAL
 /tasks — Your personal task list
 /settings — Timezone and language
 /apitoken — Get a token for the web dashboard
+/export — Download your data as a JSON file
 
 You can also send me photos, voice messages and documents (PDF/text) and I will read them.
 
@@ -203,6 +205,7 @@ GENERAL
 /tasks — Your personal task list
 /settings — Timezone and language
 /apitoken — Get a token for the web dashboard
+/export — Download your data as a JSON file
 
 You can also send me photos, voice messages and documents (PDF/text) and I will read them.
 
