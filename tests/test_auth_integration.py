@@ -2,6 +2,13 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 import pytest
+
+from app.config import settings
+
+pytestmark = pytest.mark.skipif(
+    not settings.database_url.strip(),
+    reason="DATABASE_URL is not configured; integration test requires a real database.",
+)
 from sqlalchemy import delete, select
 
 from app.database import get_session_factory
