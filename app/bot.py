@@ -33,6 +33,7 @@ USER_BOT_COMMANDS = [
     BotCommand("debts", "Your open debts and loans"),
     BotCommand("tasks", "Your personal task list"),
     BotCommand("settings", "Timezone and language"),
+    BotCommand("apitoken", "Get your web dashboard token"),
 ]
 
 

@@ -6,6 +6,8 @@ from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 
+from app.api.dashboard import api_router as dashboard_api_router
+from app.api.dashboard import page_router as dashboard_page_router
 from app.api.health import router as health_router
 from app.api.webhook import router as webhook_router
 from app.bot import create_telegram_application
@@ -125,6 +127,8 @@ app = FastAPI(
 
 app.include_router(health_router)
 app.include_router(webhook_router)
+app.include_router(dashboard_api_router)
+app.include_router(dashboard_page_router)
 
 
 @app.get("/")
