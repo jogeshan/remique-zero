@@ -88,7 +88,16 @@ async def start_command(
 
     except TelegramAccountAlreadyLinked:
         await message.reply_text(
-            "Your Telegram account is already registered with Remique Zero."
+            "👋 Welcome back to Remique Zero!\n\n"
+            "Your account is already active. Here's what I can do:\n\n"
+            "💬 Chat — just type, or send photos, voice messages "
+            "and documents for me to read\n"
+            "⏰ Reminders — /remind, or simply ask me in chat\n"
+            "🧾 Expenses — log spending and income, and track "
+            "debts and loans (/summary, /debts)\n"
+            "🧠 Memory — ask me to remember things for you "
+            "(/memories)\n\n"
+            "Type /help for all commands."
         )
 
     except RegistrationError:
@@ -138,6 +147,7 @@ GENERAL
 /income AMOUNT NOTE — Quick-add income
 /summary — Yesterday's money overview (or /summary today|week|month)
 /debts — Your open debts and loans
+/settings — Timezone and language
 
 You can also send me photos, voice messages and documents (PDF/text) and I will read them.
 
@@ -157,6 +167,7 @@ GENERAL
 /income AMOUNT NOTE — Quick-add income
 /summary — Yesterday's money overview (or /summary today|week|month)
 /debts — Your open debts and loans
+/settings — Timezone and language
 
 You can also send me photos, voice messages and documents (PDF/text) and I will read them.
 
@@ -185,6 +196,7 @@ GENERAL
 /income AMOUNT NOTE — Quick-add income
 /summary — Yesterday's money overview (or /summary today|week|month)
 /debts — Your open debts and loans
+/settings — Timezone and language
 
 You can also send me photos, voice messages and documents (PDF/text) and I will read them.
 

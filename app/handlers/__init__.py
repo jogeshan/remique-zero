@@ -1,6 +1,7 @@
 
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     MessageHandler,
     filters,
@@ -36,6 +37,11 @@ from app.handlers.finance import (
     income_command,
     summary_command,
 )
+from app.handlers.callbacks import (
+    reminder_callback_handler,
+    settings_callback_handler,
+    settings_command,
+)
 
 
 def register_handlers(application: Application) -> None:
@@ -50,6 +56,7 @@ def register_handlers(application: Application) -> None:
         ("income", income_command),
         ("summary", summary_command),
         ("debts", debts_command),
+        ("settings", settings_command),
         ("invite", invite_command),
         ("revoke", revoke_command),
         ("users", users_command),
@@ -89,5 +96,19 @@ def register_handlers(application: Application) -> None:
         MessageHandler(
             filters.Document.ALL,
             document_message_handler,
+        )
+    )
+
+    application.add_handler(
+        CallbackQueryHandler(
+            reminder_callback_handler,
+            pattern=r"^rem:",
+        )
+    )
+
+    application.add_handler(
+        CallbackQueryHandler(
+            settings_callback_handler,
+            pattern=r"^set:",
         )
     )
