@@ -31,6 +31,7 @@ USER_BOT_COMMANDS = [
     BotCommand("income", "Quick-add income"),
     BotCommand("summary", "Money overview"),
     BotCommand("debts", "Your open debts and loans"),
+    BotCommand("tasks", "Your personal task list"),
     BotCommand("settings", "Timezone and language"),
 ]
 
