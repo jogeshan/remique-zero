@@ -108,10 +108,7 @@ IMPLEMENTED:
 - Administrative backend function calling.
 - Persistent personal memory: every user can ask you to remember, recall, and forget personal facts and preferences, stored per user across conversations.
 - Reminders: every user can create one-time and recurring (daily, weekly, weekdays) reminders in their own timezone, delivered as Telegram messages. Reminders that come due while the service is asleep are delivered when it wakes.
-
-NOT YET IMPLEMENTED:
-- Voice message processing.
-- Image interpretation.
+- Multimodal input: users can send photos and images for you to interpret, voice messages and audio (Bangla, English, or Banglish — the message is transcribed for you and you respond in the same language the user used), and PDF or plain-text documents for you to read, summarize, and answer questions about.
 
 ADMINISTRATIVE TOOL RULES:
 
@@ -331,7 +328,11 @@ def _should_failover(exc: Exception) -> bool:
     return any(name in error_name for name in retryable_names)
 
 
-def _build_contents(history: list[dict], prompt: str):
+def _build_contents(
+    history: list[dict],
+    prompt: str,
+    attachments: list[tuple[str, bytes]] | None = None,
+):
     contents = []
 
     for item in history[-MAX_HISTORY_MESSAGES:]:
@@ -353,12 +354,27 @@ def _build_contents(history: list[dict], prompt: str):
             )
         )
 
+    user_parts = []
+
+    # Attachments belong to this user turn only. They stay in the
+    # contents list for the whole request, so the tool-calling loop
+    # keeps seeing the same media on every round.
+    for mime_type, data in attachments or []:
+        user_parts.append(
+            types.Part.from_bytes(
+                data=data,
+                mime_type=mime_type,
+            )
+        )
+
+    user_parts.append(
+        types.Part.from_text(text=prompt)
+    )
+
     contents.append(
         types.Content(
             role="user",
-            parts=[
-                types.Part.from_text(text=prompt)
-            ],
+            parts=user_parts,
         )
     )
 
@@ -732,13 +748,21 @@ async def generate_ai_reply(
     telegram_user_id: int,
     prompt: str,
     history: list[dict] | None = None,
+    attachments: list[tuple[str, bytes]] | None = None,
 ) -> AIReply:
 
     if not settings.gemini_api_key:
         raise AIConfigurationError
 
-    if not prompt or not prompt.strip():
+    prompt = (prompt or "").strip()
+
+    if not prompt and not attachments:
         raise AIServiceError("Empty message.")
+
+    if not prompt:
+        # Media with no caption or instruction: fall back to a
+        # generic request so the model still gets a text part.
+        prompt = "Please look at the attached media and respond helpfully."
 
     if len(prompt) > MAX_INPUT_CHARACTERS:
         raise AIServiceError("Message is too long.")
@@ -770,7 +794,8 @@ async def generate_ai_reply(
     try:
         contents = _build_contents(
             history or [],
-            prompt.strip(),
+            prompt,
+            attachments=attachments,
         )
 
         now_local = datetime.now(

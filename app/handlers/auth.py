@@ -135,6 +135,8 @@ GENERAL
 /remind TEXT — Set a reminder
 /reminders — List your reminders
 
+You can also send me photos, voice messages and documents (PDF/text) and I will read them.
+
 Your personal assistant is ready to help you."""
 
     elif admin.role == "super_admin":
@@ -147,6 +149,8 @@ GENERAL
 /memories — List what I remember about you
 /remind TEXT — Set a reminder
 /reminders — List your reminders
+
+You can also send me photos, voice messages and documents (PDF/text) and I will read them.
 
 ADMINISTRATION
 /invite [uses] [expiry_days] — Generate invitation
@@ -169,6 +173,8 @@ GENERAL
 /memories — List what I remember about you
 /remind TEXT — Set a reminder
 /reminders — List your reminders
+
+You can also send me photos, voice messages and documents (PDF/text) and I will read them.
 
 ADMINISTRATION
 /invite [uses] [expiry_days] — Generate invitation

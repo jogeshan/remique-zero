@@ -25,6 +25,11 @@ from app.handlers.ai import (
     remind_command,
     reminders_command,
 )
+from app.handlers.media import (
+    document_message_handler,
+    photo_message_handler,
+    voice_message_handler,
+)
 
 
 def register_handlers(application: Application) -> None:
@@ -53,5 +58,26 @@ def register_handlers(application: Application) -> None:
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
             ai_message_handler,
+        )
+    )
+
+    application.add_handler(
+        MessageHandler(
+            filters.PHOTO,
+            photo_message_handler,
+        )
+    )
+
+    application.add_handler(
+        MessageHandler(
+            filters.VOICE | filters.AUDIO,
+            voice_message_handler,
+        )
+    )
+
+    application.add_handler(
+        MessageHandler(
+            filters.Document.ALL,
+            document_message_handler,
         )
     )
