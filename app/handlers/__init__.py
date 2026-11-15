@@ -43,6 +43,7 @@ from app.handlers.callbacks import (
     settings_callback_handler,
     settings_command,
 )
+from app.handlers.dashboard import apitoken_command
 
 
 def register_handlers(application: Application) -> None:
@@ -59,6 +60,7 @@ def register_handlers(application: Application) -> None:
         ("debts", debts_command),
         ("tasks", tasks_command),
         ("settings", settings_command),
+        ("apitoken", apitoken_command),
         ("invite", invite_command),
         ("revoke", revoke_command),
         ("users", users_command),
