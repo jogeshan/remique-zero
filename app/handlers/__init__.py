@@ -18,13 +18,14 @@ from app.handlers.user_management import (
     promote_command,
     demote_command,
 )
-from app.handlers.ai import ai_message_handler
+from app.handlers.ai import ai_message_handler, newchat_command
 
 
 def register_handlers(application: Application) -> None:
     commands = [
         ("start", start_command),
         ("help", help_command),
+        ("newchat", newchat_command),
         ("invite", invite_command),
         ("revoke", revoke_command),
         ("users", users_command),

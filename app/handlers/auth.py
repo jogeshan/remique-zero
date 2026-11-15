@@ -130,6 +130,7 @@ async def help_command(update, context):
 GENERAL
 /start — Register or open your account
 /help — Show commands
+/newchat — Start a new conversation
 
 Your personal assistant is ready to help you."""
 
@@ -139,6 +140,7 @@ Your personal assistant is ready to help you."""
 GENERAL
 /start — Open your account
 /help — Show commands
+/newchat — Start a new conversation
 
 ADMINISTRATION
 /invite [uses] [expiry_days] — Generate invitation
@@ -157,6 +159,7 @@ SUPER ADMIN ONLY
 GENERAL
 /start — Open your account
 /help — Show commands
+/newchat — Start a new conversation
 
 ADMINISTRATION
 /invite [uses] [expiry_days] — Generate invitation
