@@ -1,9 +1,11 @@
 import logging
 from datetime import datetime, timezone
+from uuid import UUID
 
 from sqlalchemy import select
 
-from app.models import TelegramAccount, User
+from app.models import AdminAuditLog, TelegramAccount, User
+from app.services import memory_service
 from app.services.admin_service import (
     create_admin_invite,
     get_user_statistics,
@@ -139,6 +141,68 @@ TOOL_DECLARATIONS = [
             "required": ["target_telegram_id", "role"],
         },
     },
+    {
+        "name": "remember_fact",
+        "description": (
+            "Save a fact or preference to the calling user's own "
+            "long-term memory. Available to every user, for their own "
+            "memory only. Use it when the user asks to be remembered "
+            "(for example 'remember that ...')."
+        ),
+        "parameters_json_schema": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "The fact or preference to remember.",
+                },
+                "category": {
+                    "type": "string",
+                    "description": (
+                        "Short category such as 'fact', 'preference', "
+                        "'project' or 'instruction'. Defaults to 'fact'."
+                    ),
+                },
+            },
+            "required": ["content"],
+        },
+    },
+    {
+        "name": "recall_memories",
+        "description": (
+            "List the calling user's own saved memories. Available to "
+            "every user, for their own memory only."
+        ),
+        "parameters_json_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum memories to return. Defaults to 20.",
+                    "minimum": 1,
+                    "maximum": 50,
+                }
+            },
+        },
+    },
+    {
+        "name": "forget_memory",
+        "description": (
+            "Delete one of the calling user's own saved memories by "
+            "its memory ID (from recall_memories). A user can only "
+            "delete their own memories."
+        ),
+        "parameters_json_schema": {
+            "type": "object",
+            "properties": {
+                "memory_id": {
+                    "type": "string",
+                    "description": "The memory ID returned by recall_memories.",
+                }
+            },
+            "required": ["memory_id"],
+        },
+    },
 ]
 
 
@@ -165,6 +229,84 @@ def _integer(
     return result
 
 
+async def _memory_actor(session, telegram_user_id: int):
+    """
+    Resolve the acting user for the personal-memory tools.
+
+    Memory tools only ever operate on the caller's own data, so the
+    user always comes from the authenticated Telegram ID — tool
+    arguments can never name another user.
+    """
+    user = await memory_service.get_active_user_by_telegram_id(
+        session,
+        telegram_user_id,
+    )
+
+    if user is None:
+        return None, {
+            "success": False,
+            "error": "Your Remique Zero account is not active.",
+        }
+
+    return user, None
+
+
+def _memory_to_dict(memory) -> dict:
+    return {
+        "id": str(memory.id),
+        "content": memory.content,
+        "category": memory.category,
+        "created_at": (
+            memory.created_at.isoformat()
+            if memory.created_at
+            else None
+        ),
+    }
+async def _log_tool_execution(
+    session_factory,
+    *,
+    telegram_user_id: int,
+    tool_name: str,
+    result: dict,
+) -> None:
+    """
+    Write one AdminAuditLog row for a completed AI tool execution.
+
+    Runs in its own session after the tool has finished. Only the
+    outcome is recorded — never arguments or results, which may
+    contain invitation codes or other secrets. A failure here only
+    logs a warning; it must never change the tool result.
+    """
+    try:
+        async with session_factory() as session:
+            actor_user_id = await session.scalar(
+                select(TelegramAccount.user_id).where(
+                    TelegramAccount.telegram_user_id == telegram_user_id
+                )
+            )
+
+            session.add(
+                AdminAuditLog(
+                    actor_user_id=actor_user_id,
+                    action=f"ai_tool.{tool_name}",
+                    metadata_json={
+                        "success": bool(result.get("success")),
+                        "error": result.get("error"),
+                    },
+                )
+            )
+
+            await session.commit()
+
+    except Exception:
+        logger.warning(
+            "Failed to write AI tool audit log: tool=%s actor=%s",
+            tool_name,
+            telegram_user_id,
+            exc_info=True,
+        )
+
+
 async def execute_ai_tool(
     session_factory,
     *,
@@ -176,8 +318,33 @@ async def execute_ai_tool(
     Execute one Gemini-requested tool using the authenticated Telegram ID.
 
     Gemini is never allowed to supply or override the acting user's ID.
-    Existing backend services enforce all permissions.
+    Existing backend services enforce all permissions. Every outcome
+    (success or failure) is recorded in the admin audit log.
     """
+    result = await _execute_ai_tool(
+        session_factory,
+        telegram_user_id=telegram_user_id,
+        tool_name=tool_name,
+        arguments=arguments,
+    )
+
+    await _log_tool_execution(
+        session_factory,
+        telegram_user_id=telegram_user_id,
+        tool_name=tool_name,
+        result=result,
+    )
+
+    return result
+
+
+async def _execute_ai_tool(
+    session_factory,
+    *,
+    telegram_user_id: int,
+    tool_name: str,
+    arguments: dict | None,
+) -> dict:
     arguments = arguments or {}
 
     if not isinstance(arguments, dict):
@@ -240,6 +407,9 @@ async def execute_ai_tool(
                 if not revoked:
                     return {
                         "success": False,
+                        "error": (
+                            "Invitation was not found or was already revoked."
+                        ),
                         "message": (
                             "Invitation was not found or was already revoked."
                         ),
@@ -330,13 +500,23 @@ async def execute_ai_tool(
                     new_status=status,
                 )
 
+                if changed:
+                    return {
+                        "success": True,
+                        "message": f"User account {status} successfully.",
+                        "target_telegram_id": target_id,
+                        "status": status,
+                    }
+
+                no_change = (
+                    "No account change was made. The user may not exist "
+                    "or may already have this status."
+                )
+
                 return {
-                    "success": changed,
-                    "message": (
-                        f"User account {status} successfully."
-                        if changed
-                        else "No account change was made. The user may not exist or may already have this status."
-                    ),
+                    "success": False,
+                    "error": no_change,
+                    "message": no_change,
                     "target_telegram_id": target_id,
                     "status": status,
                 }
@@ -360,15 +540,123 @@ async def execute_ai_tool(
                     new_role=role,
                 )
 
+                if changed:
+                    return {
+                        "success": True,
+                        "message": f"User role changed to {role} successfully.",
+                        "target_telegram_id": target_id,
+                        "role": role,
+                    }
+
+                no_change = (
+                    "No role change was made. The user may not exist "
+                    "or may already have this role."
+                )
+
                 return {
-                    "success": changed,
-                    "message": (
-                        f"User role changed to {role} successfully."
-                        if changed
-                        else "No role change was made. The user may not exist or may already have this role."
-                    ),
+                    "success": False,
+                    "error": no_change,
+                    "message": no_change,
                     "target_telegram_id": target_id,
                     "role": role,
+                }
+
+            if tool_name == "remember_fact":
+                content = arguments.get("content")
+
+                if not isinstance(content, str) or not content.strip():
+                    raise ValueError("A non-empty fact is required.")
+
+                category = arguments.get("category") or "fact"
+                if not isinstance(category, str):
+                    raise ValueError("category must be a string.")
+
+                user, error = await _memory_actor(
+                    session,
+                    telegram_user_id,
+                )
+                if error is not None:
+                    return error
+
+                memory = await memory_service.save_memory(
+                    session,
+                    user.id,
+                    content.strip(),
+                    category.strip() or "fact",
+                )
+
+                return {
+                    "success": True,
+                    "message": "Memory saved.",
+                    "memory": _memory_to_dict(memory),
+                }
+
+            if tool_name == "recall_memories":
+                limit = _integer(
+                    arguments.get("limit", 20),
+                    "limit",
+                    minimum=1,
+                    maximum=50,
+                )
+
+                user, error = await _memory_actor(
+                    session,
+                    telegram_user_id,
+                )
+                if error is not None:
+                    return error
+
+                memories = await memory_service.list_memories(
+                    session,
+                    user.id,
+                    limit=limit,
+                )
+
+                return {
+                    "success": True,
+                    "count": len(memories),
+                    "memories": [
+                        _memory_to_dict(memory) for memory in memories
+                    ],
+                }
+
+            if tool_name == "forget_memory":
+                raw_id = arguments.get("memory_id")
+
+                if not isinstance(raw_id, str) or not raw_id.strip():
+                    raise ValueError("A valid memory_id is required.")
+
+                try:
+                    memory_id = UUID(raw_id.strip())
+                except ValueError:
+                    raise ValueError(
+                        "memory_id must be a valid memory ID."
+                    ) from None
+
+                user, error = await _memory_actor(
+                    session,
+                    telegram_user_id,
+                )
+                if error is not None:
+                    return error
+
+                deleted = await memory_service.delete_memory(
+                    session,
+                    user.id,
+                    memory_id,
+                )
+
+                if not deleted:
+                    return {
+                        "success": False,
+                        "message": (
+                            "Memory was not found among your memories."
+                        ),
+                    }
+
+                return {
+                    "success": True,
+                    "message": "Memory deleted.",
                 }
 
             return {

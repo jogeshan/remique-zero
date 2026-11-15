@@ -1,3 +1,4 @@
+import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
@@ -15,6 +16,7 @@ from app.models import (
     User,
     UserSetting,
 )
+from app.services import memory_service
 from app.services.ai_tools import (
     TOOL_DECLARATIONS,
     execute_ai_tool,
@@ -27,11 +29,23 @@ MAX_INPUT_CHARACTERS = 8000
 MAX_OUTPUT_TOKENS = 900
 MAX_TOOL_ROUNDS = 5
 
+# Tools that change backend state. Within a single AI request, an
+# identical repeat call reuses the first result instead of executing
+# again, so a duplicated function call cannot create duplicate
+# invitations or repeat an account change.
+MUTATING_TOOLS = {
+    "create_invite",
+    "revoke_invite",
+    "set_user_status",
+    "change_user_role",
+}
+
 
 def build_system_instruction(
     role: str,
     display_name: str | None = None,
     timezone_name: str | None = None,
+    memories_text: str | None = None,
 ) -> str:
 
     role_descriptions = {
@@ -91,6 +105,7 @@ IMPLEMENTED:
 - Database-backed user accounts.
 - Persistent conversation history (use /newchat to start fresh; the previous conversation is preserved).
 - Administrative backend function calling.
+- Persistent personal memory: every user can ask you to remember, recall, and forget personal facts and preferences, stored per user across conversations.
 
 NOT YET IMPLEMENTED:
 - Reminder creation and scheduling.
@@ -127,6 +142,22 @@ USER MANAGEMENT RULES:
 - Use change_user_role to promote or demote an account.
 - If a required target Telegram ID is missing, ask for it.
 
+MEMORY RULES:
+
+- You can remember, recall, and forget personal facts for the user
+  you are speaking with, using the remember_fact, recall_memories,
+  and forget_memory tools. These work for every role, but only ever
+  on that user's own memory.
+- When the user explicitly asks you to remember something (for
+  example "remember that ..."), call remember_fact instead of only
+  acknowledging it in text.
+- When the user asks what you remember about them, call
+  recall_memories.
+- When the user asks you to forget something, call recall_memories
+  first if you need the memory ID, then forget_memory.
+- Never invent memories. Only state facts that a tool returned or
+  that appear in the stored-memory section of these instructions.
+
 REMINDER RULES:
 
 Reminder scheduling and automatic delivery are not implemented.
@@ -145,7 +176,7 @@ Python services enforce permissions and perform actual operations.
 
     role = role if role in role_descriptions else "user"
 
-    return (
+    instruction = (
         "You are Remique Zero, a helpful personal AI assistant.\n\n"
         f"Authenticated user: {display_name or 'Telegram user'}\n"
         f"Authenticated role: {role}\n"
@@ -153,6 +184,17 @@ Python services enforce permissions and perform actual operations.
         f"{role_descriptions[role]}\n"
         f"{capabilities}"
     )
+
+    if memories_text:
+        instruction += (
+            "\n\nWhat you remember about this user:\n"
+            f"{memories_text}\n\n"
+            "This is stored memory from earlier conversations. "
+            "Use it when it is relevant, and tell the user they can "
+            "ask you to update or delete any of it at any time."
+        )
+
+    return instruction
 
 
 class AIServiceError(Exception):
@@ -488,6 +530,7 @@ async def _generate_with_tools(
     """
 
     tool_was_requested = False
+    executed_mutating: dict = {}
 
     try:
         for round_number in range(MAX_TOOL_ROUNDS + 1):
@@ -556,12 +599,34 @@ async def _generate_with_tools(
                     telegram_user_id,
                 )
 
-                result = await execute_ai_tool(
-                    session_factory,
-                    telegram_user_id=telegram_user_id,
-                    tool_name=function_name,
-                    arguments=function_arguments,
-                )
+                dedupe_key = None
+                if function_name in MUTATING_TOOLS:
+                    dedupe_key = (
+                        function_name,
+                        json.dumps(
+                            function_arguments,
+                            sort_keys=True,
+                            default=str,
+                        ),
+                    )
+
+                if dedupe_key is not None and dedupe_key in executed_mutating:
+                    logger.info(
+                        "Duplicate AI tool call skipped: name=%s actor=%s",
+                        function_name,
+                        telegram_user_id,
+                    )
+                    result = executed_mutating[dedupe_key]
+                else:
+                    result = await execute_ai_tool(
+                        session_factory,
+                        telegram_user_id=telegram_user_id,
+                        tool_name=function_name,
+                        arguments=function_arguments,
+                    )
+
+                    if dedupe_key is not None:
+                        executed_mutating[dedupe_key] = result
 
                 # NOTE: Part.from_function_response() does not accept an
                 # `id` argument in google-genai 1.x — passing one raises
@@ -600,6 +665,42 @@ async def _generate_with_tools(
         raise
 
 
+async def _load_memories_text(
+    session_factory,
+    telegram_user_id: int,
+) -> str | None:
+    """
+    Load the user's stored memories, formatted for the system prompt.
+
+    Memory is an enhancement, never a dependency: any failure is
+    logged and treated as "no memories" so chat keeps working.
+    """
+    try:
+        async with session_factory() as session:
+            user = await memory_service.get_active_user_by_telegram_id(
+                session,
+                telegram_user_id,
+            )
+
+            if user is None:
+                return None
+
+            memories = await memory_service.get_memories_for_context(
+                session,
+                user.id,
+            )
+
+        return memory_service.format_memories_for_prompt(memories) or None
+
+    except Exception:
+        logger.exception(
+            "Unable to load memories for Telegram user %s; "
+            "continuing without them.",
+            telegram_user_id,
+        )
+        return None
+
+
 async def generate_ai_reply(
     session_factory,
     *,
@@ -632,6 +733,11 @@ async def generate_ai_reply(
         telegram_user_id,
     )
 
+    memories_text = await _load_memories_text(
+        session_factory,
+        telegram_user_id,
+    )
+
     started_at = perf_counter()
     selected_model = models[0]
     response = None
@@ -646,6 +752,7 @@ async def generate_ai_reply(
             role=user_role,
             display_name=display_name,
             timezone_name=timezone_name,
+            memories_text=memories_text,
         )
 
         async with genai.Client(
