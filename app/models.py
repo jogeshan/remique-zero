@@ -1,15 +1,19 @@
 
 import uuid
+from datetime import date
+from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Index,
     Integer,
     JSON,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -618,5 +622,161 @@ class UserMemory(TimestampMixin, Base):
             "ix_user_memories_user_created",
             "user_id",
             "created_at",
+        ),
+    )
+
+
+class Transaction(TimestampMixin, Base):
+    __tablename__ = "transactions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=new_uuid,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    type: Mapped[str] = mapped_column(
+        String(10),
+        nullable=False,
+    )
+    amount: Mapped["Decimal"] = mapped_column(
+        Numeric(12, 2),
+        nullable=False,
+    )
+    currency: Mapped[str] = mapped_column(
+        String(3),
+        default="BDT",
+        nullable=False,
+    )
+    category: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+    )
+    note: Mapped[str | None] = mapped_column(Text)
+    occurred_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_transactions_user_occurred",
+            "user_id",
+            "occurred_at",
+        ),
+        CheckConstraint(
+            "type IN ('income', 'expense')",
+            name="valid_transaction_type",
+        ),
+    )
+
+
+class Debt(TimestampMixin, Base):
+    __tablename__ = "debts"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=new_uuid,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # "borrowed": the user owes the counterparty money.
+    # "lent": the counterparty owes the user money.
+    direction: Mapped[str] = mapped_column(
+        String(10),
+        nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(
+        String(10),
+        default="debt",
+        nullable=False,
+    )
+    counterparty: Mapped[str] = mapped_column(
+        String(120),
+        nullable=False,
+    )
+    principal: Mapped["Decimal"] = mapped_column(
+        Numeric(12, 2),
+        nullable=False,
+    )
+    remaining: Mapped["Decimal"] = mapped_column(
+        Numeric(12, 2),
+        nullable=False,
+    )
+    note: Mapped[str | None] = mapped_column(Text)
+    due_date: Mapped["date | None"] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(
+        String(10),
+        default="open",
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_debts_user_status",
+            "user_id",
+            "status",
+        ),
+        CheckConstraint(
+            "direction IN ('borrowed', 'lent')",
+            name="valid_debt_direction",
+        ),
+        CheckConstraint(
+            "kind IN ('debt', 'loan')",
+            name="valid_debt_kind",
+        ),
+        CheckConstraint(
+            "status IN ('open', 'settled')",
+            name="valid_debt_status",
+        ),
+    )
+
+
+class DebtPayment(Base):
+    __tablename__ = "debt_payments"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=new_uuid,
+    )
+    debt_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("debts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    amount: Mapped["Decimal"] = mapped_column(
+        Numeric(12, 2),
+        nullable=False,
+    )
+    paid_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_debt_payments_user_paid",
+            "user_id",
+            "paid_at",
         ),
     )
