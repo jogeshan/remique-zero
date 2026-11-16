@@ -45,12 +45,14 @@ from app.handlers.callbacks import (
 )
 from app.handlers.dashboard import apitoken_command
 from app.handlers.export import export_command
+from app.handlers.menu import menu_callback_handler, menu_command
 
 
 def register_handlers(application: Application) -> None:
     commands = [
         ("start", start_command),
         ("help", help_command),
+        ("menu", menu_command),
         ("newchat", newchat_command),
         ("memories", memories_command),
         ("remind", remind_command),
@@ -116,5 +118,12 @@ def register_handlers(application: Application) -> None:
         CallbackQueryHandler(
             settings_callback_handler,
             pattern=r"^set:",
+        )
+    )
+
+    application.add_handler(
+        CallbackQueryHandler(
+            menu_callback_handler,
+            pattern=r"^menu:",
         )
     )
