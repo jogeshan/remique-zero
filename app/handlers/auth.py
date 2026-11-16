@@ -2,6 +2,7 @@ import logging
 
 from app.services.admin_service import get_admin
 from telegram import Update
+from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from app.database import get_session_factory
@@ -134,86 +135,104 @@ async def help_command(update, context):
         admin = await get_admin(session, user.id)
 
     if admin is None:
-        help_text = """🤖 Remique Zero — Commands
+        help_text = """🤖 <b>Remique Zero — Commands</b>
 
-GENERAL
-/start — Register or open your account
-/help — Show commands
-/newchat — Start a new conversation
-/memories — List what I remember about you
-/remind TEXT — Set a reminder
-/reminders — List your reminders
-/expense AMOUNT NOTE — Quick-add an expense
-/income AMOUNT NOTE — Quick-add income
-/summary — Yesterday's money overview (or /summary today|week|month)
-/debts — Your open debts and loans
-/tasks — Your personal task list
-/settings — Timezone and language
-/apitoken — Get a token for the web dashboard
-/export — Download your data as a JSON file
+<b>💬 General</b>
+🚀 /start — Register or open your account
+❓ /help — Show commands
+💬 /newchat — Start a new conversation
+🧠 /memories — List what I remember about you
 
-You can also send me photos, voice messages and documents (PDF/text) and I will read them.
+<b>⏰ Reminders &amp; Tasks</b>
+⏰ /remind TEXT — Set a reminder
+📋 /reminders — List your reminders
+✅ /tasks — Your personal task list
+
+<b>💰 Money</b>
+💸 /expense AMOUNT NOTE — Quick-add an expense
+💰 /income AMOUNT NOTE — Quick-add income
+📊 /summary — Yesterday's money overview (or /summary today|week|month)
+🤝 /debts — Your open debts and loans
+
+<b>⚙️ Account</b>
+⚙️ /settings — Timezone and language
+🔑 /apitoken — Get a token for the web dashboard
+📥 /export — Download your data as a JSON file
+
+📸 You can also send me photos, voice messages and documents (PDF/text) and I will read them.
 
 Your personal assistant is ready to help you."""
 
     elif admin.role == "super_admin":
-        help_text = """👑 Remique Zero — Super Admin
+        help_text = """👑 <b>Remique Zero — Super Admin</b>
 
-GENERAL
-/start — Open your account
-/help — Show commands
-/newchat — Start a new conversation
-/memories — List what I remember about you
-/remind TEXT — Set a reminder
-/reminders — List your reminders
-/expense AMOUNT NOTE — Quick-add an expense
-/income AMOUNT NOTE — Quick-add income
-/summary — Yesterday's money overview (or /summary today|week|month)
-/debts — Your open debts and loans
-/tasks — Your personal task list
-/settings — Timezone and language
-/apitoken — Get a token for the web dashboard
-/export — Download your data as a JSON file
+<b>💬 General</b>
+🚀 /start — Register or open your account
+❓ /help — Show commands
+💬 /newchat — Start a new conversation
+🧠 /memories — List what I remember about you
 
-You can also send me photos, voice messages and documents (PDF/text) and I will read them.
+<b>⏰ Reminders &amp; Tasks</b>
+⏰ /remind TEXT — Set a reminder
+📋 /reminders — List your reminders
+✅ /tasks — Your personal task list
 
-ADMINISTRATION
-/invite [uses] [expiry_days] — Generate invitation
-/revoke CODE — Revoke invitation
-/users — View user statistics
-/disable TELEGRAM_ID — Disable account
-/enable TELEGRAM_ID — Reactivate account
+<b>💰 Money</b>
+💸 /expense AMOUNT NOTE — Quick-add an expense
+💰 /income AMOUNT NOTE — Quick-add income
+📊 /summary — Yesterday's money overview (or /summary today|week|month)
+🤝 /debts — Your open debts and loans
 
-SUPER ADMIN ONLY
-/promote TELEGRAM_ID — Make admin
-/demote TELEGRAM_ID — Remove admin role"""
+<b>⚙️ Account</b>
+⚙️ /settings — Timezone and language
+🔑 /apitoken — Get a token for the web dashboard
+📥 /export — Download your data as a JSON file
+
+📸 You can also send me photos, voice messages and documents (PDF/text) and I will read them.
+
+<b>🛡️ Administration</b>
+✉️ /invite [uses] [expiry_days] — Generate invitation
+🚫 /revoke CODE — Revoke invitation
+👥 /users — View user statistics
+🔒 /disable TELEGRAM_ID — Disable account
+🔓 /enable TELEGRAM_ID — Reactivate account
+
+<b>👑 Super Admin Only</b>
+⬆️ /promote TELEGRAM_ID — Make admin
+⬇️ /demote TELEGRAM_ID — Remove admin role"""
 
     else:
-        help_text = """🛡️ Remique Zero — Administrator
+        help_text = """🛡️ <b>Remique Zero — Administrator</b>
 
-GENERAL
-/start — Open your account
-/help — Show commands
-/newchat — Start a new conversation
-/memories — List what I remember about you
-/remind TEXT — Set a reminder
-/reminders — List your reminders
-/expense AMOUNT NOTE — Quick-add an expense
-/income AMOUNT NOTE — Quick-add income
-/summary — Yesterday's money overview (or /summary today|week|month)
-/debts — Your open debts and loans
-/tasks — Your personal task list
-/settings — Timezone and language
-/apitoken — Get a token for the web dashboard
-/export — Download your data as a JSON file
+<b>💬 General</b>
+🚀 /start — Register or open your account
+❓ /help — Show commands
+💬 /newchat — Start a new conversation
+🧠 /memories — List what I remember about you
 
-You can also send me photos, voice messages and documents (PDF/text) and I will read them.
+<b>⏰ Reminders &amp; Tasks</b>
+⏰ /remind TEXT — Set a reminder
+📋 /reminders — List your reminders
+✅ /tasks — Your personal task list
 
-ADMINISTRATION
-/invite [uses] [expiry_days] — Generate invitation
-/revoke CODE — Revoke invitation
-/users — View user statistics
-/disable TELEGRAM_ID — Disable account
-/enable TELEGRAM_ID — Reactivate account"""
+<b>💰 Money</b>
+💸 /expense AMOUNT NOTE — Quick-add an expense
+💰 /income AMOUNT NOTE — Quick-add income
+📊 /summary — Yesterday's money overview (or /summary today|week|month)
+🤝 /debts — Your open debts and loans
 
-    await message.reply_text(help_text)
+<b>⚙️ Account</b>
+⚙️ /settings — Timezone and language
+🔑 /apitoken — Get a token for the web dashboard
+📥 /export — Download your data as a JSON file
+
+📸 You can also send me photos, voice messages and documents (PDF/text) and I will read them.
+
+<b>🛡️ Administration</b>
+✉️ /invite [uses] [expiry_days] — Generate invitation
+🚫 /revoke CODE — Revoke invitation
+👥 /users — View user statistics
+🔒 /disable TELEGRAM_ID — Disable account
+🔓 /enable TELEGRAM_ID — Reactivate account"""
+
+    await message.reply_text(help_text, parse_mode=ParseMode.HTML)
