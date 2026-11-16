@@ -20,7 +20,6 @@ from app.handlers.user_management import (
     demote_command,
 )
 from app.handlers.ai import (
-    ai_message_handler,
     memories_command,
     newchat_command,
     remind_command,
@@ -45,7 +44,12 @@ from app.handlers.callbacks import (
 )
 from app.handlers.dashboard import apitoken_command
 from app.handlers.export import export_command
-from app.handlers.menu import menu_callback_handler, menu_command
+from app.handlers.menu import (
+    cancel_command,
+    menu_callback_handler,
+    menu_command,
+    text_message_handler,
+)
 
 
 def register_handlers(application: Application) -> None:
@@ -53,6 +57,7 @@ def register_handlers(application: Application) -> None:
         ("start", start_command),
         ("help", help_command),
         ("menu", menu_command),
+        ("cancel", cancel_command),
         ("newchat", newchat_command),
         ("memories", memories_command),
         ("remind", remind_command),
@@ -82,7 +87,7 @@ def register_handlers(application: Application) -> None:
     application.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
-            ai_message_handler,
+            text_message_handler,
         )
     )
 
