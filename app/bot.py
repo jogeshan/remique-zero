@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 # by typing them (see /help for administrators).
 USER_BOT_COMMANDS = [
     BotCommand("start", "🚀 Register or open your account"),
+    BotCommand("menu", "📋 Open the interactive menu"),
     BotCommand("help", "❓ Show all commands"),
     BotCommand("newchat", "💬 Start a new conversation"),
     BotCommand("memories", "🧠 What I remember about you"),

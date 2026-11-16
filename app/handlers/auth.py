@@ -139,6 +139,7 @@ async def help_command(update, context):
 
 <b>💬 General</b>
 🚀 /start — Register or open your account
+📋 /menu — Interactive menu with buttons
 ❓ /help — Show commands
 💬 /newchat — Start a new conversation
 🧠 /memories — List what I remember about you
@@ -168,6 +169,7 @@ Your personal assistant is ready to help you."""
 
 <b>💬 General</b>
 🚀 /start — Register or open your account
+📋 /menu — Interactive menu with buttons
 ❓ /help — Show commands
 💬 /newchat — Start a new conversation
 🧠 /memories — List what I remember about you
@@ -206,6 +208,7 @@ Your personal assistant is ready to help you."""
 
 <b>💬 General</b>
 🚀 /start — Register or open your account
+📋 /menu — Interactive menu with buttons
 ❓ /help — Show commands
 💬 /newchat — Start a new conversation
 🧠 /memories — List what I remember about you

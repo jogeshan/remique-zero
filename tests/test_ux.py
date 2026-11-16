@@ -88,6 +88,7 @@ async def test_setup_bot_commands_registers_user_menu():
     names = [command.command for command in application.bot.commands]
     assert names == [
         "start",
+        "menu",
         "help",
         "newchat",
         "memories",
