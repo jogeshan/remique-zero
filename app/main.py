@@ -22,7 +22,7 @@ from app.services.delivery_service import process_due_deliveries
 logger = logging.getLogger(__name__)
 
 DELIVERY_INTERVAL_SECONDS = 10
-DELIVERY_MAX_STALENESS_SECONDS = 60
+DELIVERY_QUIET_STALENESS_SECONDS = 1200
 
 
 async def _delivery_loop(bot) -> None:
@@ -40,7 +40,9 @@ async def _delivery_loop(bot) -> None:
     touching the database while nothing is due, so an idle bot
     does not keep the Neon compute awake around the clock. A
     pass still runs at least every
-    DELIVERY_MAX_STALENESS_SECONDS as a safety net.
+    DELIVERY_QUIET_STALENESS_SECONDS while quiet (20 minutes —
+    long enough for Neon to suspend its compute between passes)
+    as a safety net.
     """
     from datetime import datetime, timezone
 
@@ -63,7 +65,7 @@ async def _delivery_loop(bot) -> None:
                 now,
                 earliest,
                 last_pass_at,
-                max_staleness_seconds=DELIVERY_MAX_STALENESS_SECONDS,
+                quiet_staleness_seconds=DELIVERY_QUIET_STALENESS_SECONDS,
             ):
                 await process_due_deliveries(
                     session_factory,
