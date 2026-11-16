@@ -22,24 +22,58 @@ from app.services.delivery_service import process_due_deliveries
 logger = logging.getLogger(__name__)
 
 DELIVERY_INTERVAL_SECONDS = 10
+DELIVERY_MAX_STALENESS_SECONDS = 60
 
 
 async def _delivery_loop(bot) -> None:
     """
-    Deliver due reminders every minute.
+    Deliver due reminders, polling smartly.
 
     The first pass runs immediately at startup, which is the
     catch-up mechanism for reminders that came due while the
     service was asleep on Render: they are simply overdue jobs
     and are delivered by that first pass. A failed pass is
     logged and retried on the next tick; it never kills the loop.
+
+    Between passes the loop remembers the earliest pending job
+    (the next-due cache in delivery_service) and sleeps without
+    touching the database while nothing is due, so an idle bot
+    does not keep the Neon compute awake around the clock. A
+    pass still runs at least every
+    DELIVERY_MAX_STALENESS_SECONDS as a safety net.
     """
+    from datetime import datetime, timezone
+
+    from app.services import delivery_service
+
+    session_factory = get_session_factory()
+    next_due = None
+    last_pass_at = None
+
     while True:
         try:
-            await process_due_deliveries(
-                get_session_factory(),
-                bot,
-            )
+            now = datetime.now(timezone.utc)
+            hint = delivery_service.get_next_due_hint()
+            candidates = [
+                value for value in (next_due, hint) if value is not None
+            ]
+            earliest = min(candidates) if candidates else None
+
+            if delivery_service.should_run_delivery_pass(
+                now,
+                earliest,
+                last_pass_at,
+                max_staleness_seconds=DELIVERY_MAX_STALENESS_SECONDS,
+            ):
+                await process_due_deliveries(
+                    session_factory,
+                    bot,
+                )
+                last_pass_at = datetime.now(timezone.utc)
+                next_due = await delivery_service.get_next_due_at(
+                    session_factory
+                )
+                delivery_service.clear_next_due_hint()
         except Exception:
             logger.exception("Reminder delivery pass failed.")
 

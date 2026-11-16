@@ -16,6 +16,7 @@ from app.models import (
     ReminderOccurrence,
     User,
 )
+from app.services.delivery_service import note_next_due
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +165,7 @@ async def create_reminder(
     )
 
     await session.commit()
+    note_next_due(first_run_utc)
     return reminder
 
 
@@ -467,6 +469,7 @@ async def snooze_delivered_occurrence(
         reminder.status = "active"
 
     await session.commit()
+    note_next_due(run_at)
     return True
 
 
