@@ -67,25 +67,39 @@ def should_run_delivery_pass(
     earliest_due: datetime | None,
     last_pass_at: datetime | None,
     *,
-    max_staleness_seconds: int = 60,
+    quiet_staleness_seconds: int = 1200,
+    active_window_seconds: int = 900,
+    active_staleness_seconds: int = 60,
 ) -> bool:
     """
     Decide whether the delivery loop should hit the database.
 
-    Run a pass when nothing is known to be pending, when the
-    earliest known job is due, or when the last pass is older
-    than the staleness cap (the safety net for missed hints).
+    Run a pass on startup, when the earliest known job is due,
+    or when the last pass is stale. "Stale" is deliberately
+    generous while the bot is quiet — 20 minutes by default —
+    because every in-process scheduling path reports its job
+    time through note_next_due, and Neon needs ~5 idle minutes
+    to suspend its compute to zero; a 60-second safety poll
+    would keep it billed around the clock for nothing. Near a
+    known due time (inside the active window) the tight 60s
+    staleness applies instead, so imminent deliveries stay
+    precise even if a hint was somehow missed.
     """
-    if earliest_due is None:
-        return True
-
-    if earliest_due <= now:
-        return True
-
     if last_pass_at is None:
         return True
 
-    return (now - last_pass_at).total_seconds() >= max_staleness_seconds
+    if earliest_due is not None and earliest_due <= now:
+        return True
+
+    age = (now - last_pass_at).total_seconds()
+
+    if (
+        earliest_due is not None
+        and (earliest_due - now).total_seconds() <= active_window_seconds
+    ):
+        return age >= active_staleness_seconds
+
+    return age >= quiet_staleness_seconds
 
 # How long a claimed job stays locked before another worker may
 # reclaim it (crash recovery for a worker that died mid-delivery).

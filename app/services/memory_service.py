@@ -95,6 +95,42 @@ async def list_memories(
     return list(result)
 
 
+async def search_memories(
+    session: AsyncSession,
+    user_id: UUID,
+    query: str,
+    limit: int = 20,
+) -> list[UserMemory]:
+    """
+    Search a user's memories by keyword (case-insensitive
+    substring match on the content), newest first.
+
+    This is how older facts stay reachable after they fall out
+    of the newest-20 passive context window: the AI calls it on
+    demand instead of every memory being loaded into the prompt.
+    An empty query behaves like list_memories.
+    """
+    text = (query or "").strip()
+
+    if not text:
+        return await list_memories(session, user_id, limit=limit)
+
+    escaped = (
+        text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
+
+    result = await session.scalars(
+        select(UserMemory)
+        .where(
+            UserMemory.user_id == user_id,
+            UserMemory.content.ilike(f"%{escaped}%", escape="\\"),
+        )
+        .order_by(UserMemory.created_at.desc(), UserMemory.id.desc())
+        .limit(limit)
+    )
+    return list(result)
+
+
 async def get_memories_for_context(
     session: AsyncSession,
     user_id: UUID,

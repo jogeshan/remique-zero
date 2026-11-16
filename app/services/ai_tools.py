@@ -178,7 +178,9 @@ TOOL_DECLARATIONS = [
         "name": "recall_memories",
         "description": (
             "List the calling user's own saved memories. Available to "
-            "every user, for their own memory only."
+            "every user, for their own memory only. Pass a query to "
+            "search older memories by keyword — facts beyond the most "
+            "recent ones are only reachable this way."
         ),
         "parameters_json_schema": {
             "type": "object",
@@ -188,7 +190,16 @@ TOOL_DECLARATIONS = [
                     "description": "Maximum memories to return. Defaults to 20.",
                     "minimum": 1,
                     "maximum": 50,
-                }
+                },
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Optional keyword to search memory contents "
+                        "(case-insensitive). Use it when the user asks "
+                        "about something specific that may be an older "
+                        "memory."
+                    ),
+                },
             },
         },
     },
@@ -1254,11 +1265,21 @@ async def _execute_ai_tool(
                 if error is not None:
                     return error
 
-                memories = await memory_service.list_memories(
-                    session,
-                    user.id,
-                    limit=limit,
-                )
+                query = arguments.get("query")
+
+                if isinstance(query, str) and query.strip():
+                    memories = await memory_service.search_memories(
+                        session,
+                        user.id,
+                        query,
+                        limit=limit,
+                    )
+                else:
+                    memories = await memory_service.list_memories(
+                        session,
+                        user.id,
+                        limit=limit,
+                    )
 
                 return {
                     "success": True,

@@ -169,6 +169,10 @@ MEMORY RULES:
   acknowledging it in text.
 - When the user asks what you remember about them, call
   recall_memories.
+- The stored-memory section shows only the most recent memories.
+  When the user refers to something specific that is not shown
+  there, call recall_memories with a query keyword to search
+  older memories before saying you don't know.
 - When the user asks you to forget something, call recall_memories
   first if you need the memory ID, then forget_memory.
 - Never invent memories. Only state facts that a tool returned or
