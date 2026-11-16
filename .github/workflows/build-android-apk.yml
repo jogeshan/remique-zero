@@ -25,11 +25,16 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Set up the Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install SDK platform 35
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      # The ubuntu runner image already ships an Android SDK; the
+      # previous setup-android action step tried to install the
+      # removed legacy "tools" package and failed, so install the
+      # two packages this build needs directly instead.
+      - name: Install SDK platform 35 + build-tools
+        run: |
+          SDKMANAGER=$(find "$ANDROID_SDK_ROOT/cmdline-tools" -name sdkmanager -type f | sort -V | tail -1)
+          echo "Using $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Build the debug APK
         working-directory: android-app
