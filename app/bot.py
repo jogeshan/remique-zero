@@ -21,20 +21,20 @@ logger = logging.getLogger(__name__)
 # commands are deliberately not listed here; they stay available
 # by typing them (see /help for administrators).
 USER_BOT_COMMANDS = [
-    BotCommand("start", "Register or open your account"),
-    BotCommand("help", "Show all commands"),
-    BotCommand("newchat", "Start a new conversation"),
-    BotCommand("memories", "What I remember about you"),
-    BotCommand("remind", "Set a reminder"),
-    BotCommand("reminders", "List your reminders"),
-    BotCommand("expense", "Quick-add an expense"),
-    BotCommand("income", "Quick-add income"),
-    BotCommand("summary", "Money overview"),
-    BotCommand("debts", "Your open debts and loans"),
-    BotCommand("tasks", "Your personal task list"),
-    BotCommand("settings", "Timezone and language"),
-    BotCommand("apitoken", "Get your web dashboard token"),
-    BotCommand("export", "Download your data as a JSON file"),
+    BotCommand("start", "🚀 Register or open your account"),
+    BotCommand("help", "❓ Show all commands"),
+    BotCommand("newchat", "💬 Start a new conversation"),
+    BotCommand("memories", "🧠 What I remember about you"),
+    BotCommand("remind", "⏰ Set a reminder"),
+    BotCommand("reminders", "📋 List your reminders"),
+    BotCommand("expense", "💸 Quick-add an expense"),
+    BotCommand("income", "💰 Quick-add income"),
+    BotCommand("summary", "📊 Money overview"),
+    BotCommand("debts", "🤝 Your open debts and loans"),
+    BotCommand("tasks", "✅ Your personal task list"),
+    BotCommand("settings", "⚙️ Timezone and language"),
+    BotCommand("apitoken", "🔑 Get your web dashboard token"),
+    BotCommand("export", "📥 Download your data as a JSON file"),
 ]
 
 
