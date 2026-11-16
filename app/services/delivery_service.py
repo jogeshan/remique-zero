@@ -16,6 +16,77 @@ from app.models import (
 
 logger = logging.getLogger(__name__)
 
+# --- next-due cache -------------------------------------------------
+#
+# The delivery loop used to query PostgreSQL every 10 seconds,
+# which kept the Neon compute awake around the clock and burned
+# free-tier compute hours while nothing was due. Instead, the
+# loop remembers the earliest pending job time: one cheap
+# min(run_at) query after each pass, refreshed early whenever
+# code in this process schedules a job (note_next_due). A
+# staleness cap in the loop bounds the damage if a hint is ever
+# missed (e.g. a job written by another process).
+
+_next_due_hint: datetime | None = None
+
+
+def note_next_due(run_at: datetime | None) -> None:
+    """Record a newly scheduled job time (earlier wins)."""
+    global _next_due_hint
+
+    if run_at is None:
+        return
+
+    if _next_due_hint is None or run_at < _next_due_hint:
+        _next_due_hint = run_at
+
+
+def get_next_due_hint() -> datetime | None:
+    return _next_due_hint
+
+
+def clear_next_due_hint() -> None:
+    global _next_due_hint
+    _next_due_hint = None
+
+
+async def get_next_due_at(session_factory) -> datetime | None:
+    """Earliest run_at among pending delivery jobs, or None."""
+    from sqlalchemy import func
+
+    async with session_factory() as session:
+        return await session.scalar(
+            select(func.min(DeliveryJob.run_at)).where(
+                DeliveryJob.status == "pending"
+            )
+        )
+
+
+def should_run_delivery_pass(
+    now: datetime,
+    earliest_due: datetime | None,
+    last_pass_at: datetime | None,
+    *,
+    max_staleness_seconds: int = 60,
+) -> bool:
+    """
+    Decide whether the delivery loop should hit the database.
+
+    Run a pass when nothing is known to be pending, when the
+    earliest known job is due, or when the last pass is older
+    than the staleness cap (the safety net for missed hints).
+    """
+    if earliest_due is None:
+        return True
+
+    if earliest_due <= now:
+        return True
+
+    if last_pass_at is None:
+        return True
+
+    return (now - last_pass_at).total_seconds() >= max_staleness_seconds
+
 # How long a claimed job stays locked before another worker may
 # reclaim it (crash recovery for a worker that died mid-delivery).
 LOCK_DURATION = timedelta(minutes=5)
@@ -186,6 +257,7 @@ def _schedule_next_occurrence(
             idempotency_key=f"reminder:{occurrence_id}",
         )
     )
+    note_next_due(next_utc)
 
 
 async def _recent_finance_activity(session, user_id, now: datetime) -> bool:
