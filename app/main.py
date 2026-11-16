@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.api.chat import chat_router
 from app.api.dashboard import api_router as dashboard_api_router
 from app.api.dashboard import page_router as dashboard_page_router
 from app.api.health import router as health_router
@@ -167,6 +168,7 @@ app = FastAPI(
 app.include_router(health_router)
 app.include_router(webhook_router)
 app.include_router(dashboard_api_router)
+app.include_router(chat_router)
 app.include_router(dashboard_page_router)
 
 # Middleware added last runs outermost: security headers wrap
